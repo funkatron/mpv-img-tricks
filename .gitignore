@@ -1,0 +1,21 @@
+# Video files
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Image files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bmp
+*.tiff
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
