@@ -2,7 +2,7 @@
 
 **⚠️ PRE-ALPHA SOFTWARE** - This is experimental software in early development. Use at your own risk!
 
-Flexible image slideshow and effects system with scaling control and extreme visual experiments.
+Image slideshow and effects system with scaling control and visual effects.
 
 ## Quick Start
 
@@ -34,18 +34,18 @@ scripts/img-effects.sh reality ~/pics --output reality-break.mp4
 - **ken-burns** - Smooth zoom/pan transitions
 - **crossfade** - Smooth blending between images
 
-### Extreme Effects
-- **glitch** - Datamosh-style corruption and noise
-- **acid** - Psychedelic color shifting and morphing
-- **reality** - Physics-breaking impossible effects
+### Visual Effects
+- **glitch** - Data corruption and noise effects
+- **acid** - Color shifting and morphing
+- **reality** - Distortion and transformation effects
 - **kaleido** - Kaleidoscope patterns and fractals
-- **matrix** - Matrix rain and digital effects
-- **liquid** - Liquid distortion and morphing
+- **matrix** - Digital rain effects
+- **liquid** - Distortion and morphing effects
 
 ## Scripts
 
 - **scripts/flexible-blast.sh** - Flexible slideshow with scaling control (upscale/downscale/fit/fill)
-- **scripts/img-effects.sh** - Unified effects system (basic/chaos/extreme effects)
+- **scripts/img-effects.sh** - Unified effects system (basic/chaos/visual effects)
 - **scripts/make-video.sh** - Stitch images to video (smooth timing)
 - **mpv-scripts/blast.lua** - Hotkeys to change speed live
 
@@ -88,10 +88,10 @@ scripts/flexible-blast.sh ~/pics --duration 0.005
 # Create a glitch art video
 scripts/img-effects.sh glitch ~/cool-pics --duration 0.3 --output glitch-art.mp4
 
-# Acid trip with custom resolution
+# Color effects with custom resolution
 scripts/img-effects.sh acid ~/pics --resolution 1280x720 --output trip.mp4
 
-# Reality-breaking effects at 60fps
+# Distortion effects at 60fps
 scripts/img-effects.sh reality ~/pics --fps 60 --output physics-break.mp4
 
 # Matrix-style effects
@@ -102,12 +102,12 @@ scripts/img-effects.sh matrix ~/pics --output matrix-vision.mp4
 
 This project is currently implemented in Bash shell scripts for rapid prototyping. Future development plans include:
 
-- **Python Rewrite**: Complete rewrite in Python for better maintainability, error handling, and cross-platform compatibility
-- **Enhanced Effects**: More sophisticated visual effects using libraries like OpenCV, PIL, and NumPy
+- **Python Rewrite**: Rewrite in Python for better maintainability and cross-platform compatibility
+- **Enhanced Effects**: More sophisticated visual effects using libraries like OpenCV and PIL
 - **Real-time Processing**: Live effects processing without pre-rendering
-- **GUI Interface**: Optional graphical interface for easier effect configuration
+- **GUI Interface**: Optional graphical interface for effect configuration
 - **Plugin System**: Modular architecture for custom effects
 - **Performance Optimization**: GPU acceleration and multi-threading support
 
 ## Warning
-Some effects may cause seizures or reality distortion. Use responsibly!
+Some effects may cause seizures. Use responsibly!
