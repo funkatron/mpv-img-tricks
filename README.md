@@ -1,5 +1,7 @@
 # mpv-img-tricks
 
+**⚠️ PRE-ALPHA SOFTWARE** - This is experimental software in early development. Use at your own risk!
+
 Flexible image slideshow and effects system with scaling control and extreme visual experiments.
 
 ## Quick Start
@@ -95,6 +97,17 @@ scripts/img-effects.sh reality ~/pics --fps 60 --output physics-break.mp4
 # Matrix-style effects
 scripts/img-effects.sh matrix ~/pics --output matrix-vision.mp4
 ```
+
+## Future Plans
+
+This project is currently implemented in Bash shell scripts for rapid prototyping. Future development plans include:
+
+- **Python Rewrite**: Complete rewrite in Python for better maintainability, error handling, and cross-platform compatibility
+- **Enhanced Effects**: More sophisticated visual effects using libraries like OpenCV, PIL, and NumPy
+- **Real-time Processing**: Live effects processing without pre-rendering
+- **GUI Interface**: Optional graphical interface for easier effect configuration
+- **Plugin System**: Modular architecture for custom effects
+- **Performance Optimization**: GPU acceleration and multi-threading support
 
 ## Warning
 Some effects may cause seizures or reality distortion. Use responsibly!
