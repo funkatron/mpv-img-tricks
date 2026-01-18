@@ -1,101 +1,180 @@
 # mpv-img-tricks
 
-**⚠️ PRE-ALPHA SOFTWARE** - This is experimental software in early development. Use at your own risk!
+**⚠️ PRE-ALPHA SOFTWARE** - Experimental software in early development. Use at your own risk!
 
-Image slideshow and effects system with scaling control and visual effects.
+Image slideshow and effects system for creating rapid-fire slideshows and video effects from image collections.
+
+## Installation
+
+The scripts are available as global commands after installation. Symlinks have been created in `~/bin`:
+
+- `slideshow` - Image slideshow viewer
+- `image-effects` - Effects and slideshow script
+- `images-to-video` - Simple image-to-video converter
+
+You can also use them directly from the scripts directory:
+```bash
+scripts/slideshow.sh ~/pics
+scripts/image-effects.sh basic ~/pics
+scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
+```
 
 ## Quick Start
 
+### Simple Slideshows
+
 ```bash
-# Flexible slideshow with scaling control
-scripts/flexible-blast.sh ~/pics
+# Basic slideshow (fast image cycling)
+image-effects basic ~/pics
 
-# Basic slideshow (like original blast.sh)
-scripts/img-effects.sh basic ~/pics
+# Chaos mode (shuffled, infinite loop)
+image-effects chaos ~/pics --duration 0.02
 
-# Chaos mode (shuffled rapid-fire)
-scripts/img-effects.sh chaos ~/pics --duration 0.02
-
-# Ken Burns effect video
-scripts/img-effects.sh ken-burns ~/pics --duration 3 --output slideshow.mp4
-
-# Psychedelic acid trip
-scripts/img-effects.sh acid ~/pics --output acid-trip.mp4
-
-# Reality-breaking physics effects
-scripts/img-effects.sh reality ~/pics --output reality-break.mp4
+# Slideshow with scaling options
+slideshow ~/pics
 ```
 
-## Effects
+### Video Effects
 
-### Basic Effects
-- **basic** - Simple slideshow (like original blast.sh)
+```bash
+# Ken Burns effect (smooth zoom/pan)
+image-effects ken-burns ~/pics --duration 3 --output slideshow.mp4
+
+# Visual effects (glitch, acid, reality, etc.)
+image-effects glitch ~/pics --output glitch.mp4
+image-effects acid ~/pics --output acid-trip.mp4
+image-effects reality ~/pics --output reality-break.mp4
+
+# Simple video from images
+images-to-video ~/pics 60 1920x1080 out.mp4
+```
+
+## Available Effects
+
+### Live Slideshows (mpv)
+- **basic** - Simple fast slideshow
 - **chaos** - Shuffled rapid-fire with infinite loop
+
+### Video Effects (ffmpeg)
 - **ken-burns** - Smooth zoom/pan transitions
 - **crossfade** - Smooth blending between images
-
-### Visual Effects
-- **glitch** - Data corruption and noise effects
-- **acid** - Color shifting and morphing
+- **glitch** - Color distortion and corruption effects
+- **acid** - Psychedelic color shifting
 - **reality** - Distortion and transformation effects
-- **kaleido** - Kaleidoscope patterns and fractals
-- **matrix** - Digital rain effects
-- **liquid** - Distortion and morphing effects
+- **kaleido** - Kaleidoscope patterns
+- **matrix** - Digital rain-style effects
+- **liquid** - Liquid distortion morphing
 
 ## Scripts
 
-- **scripts/flexible-blast.sh** - Flexible slideshow with scaling control (upscale/downscale/fit/fill)
-- **scripts/img-effects.sh** - Unified effects system (basic/chaos/visual effects)
-- **scripts/make-video.sh** - Stitch images to video (smooth timing)
-- **mpv-scripts/blast.lua** - Hotkeys to change speed live
+- **scripts/image-effects.sh** - Main effects script (slideshows and video effects)
+- **scripts/slideshow.sh** - Slideshow with image scaling options
+- **scripts/images-to-video.sh** - Simple image-to-video converter
+- **mpv-scripts/blast.lua** - mpv script for live speed control and image management
 
-## Hotkeys (when mpv loads `blast.lua`)
-- **1** : ~60 img/s   (0.016s/image)
-- **2** : ~20 img/s   (0.05s/image)
-- **3** : ~10 img/s   (0.1s/image)
-- **c** : toggle shuffle
-- **l** : toggle loop-playlist
+## Live Controls (with `blast.lua`)
 
-## Flexible Slideshow Options
+When using mpv with `--script=mpv-scripts/blast.lua`, you can control playback:
 
-The `flexible-blast.sh` script gives you control over image scaling:
+**Playback Controls:**
+- **Alt+1** - Very fast (~1000 images/sec, 0.001s)
+- **Alt+2** - Fast (~20 images/sec, 0.05s)
+- **Alt+3** - Medium (~10 images/sec, 0.1s)
+- **Alt+4** - Normal (1 image/sec, 1.0s)
+- **Alt+5** - Slow (1 image/3 sec, 3.0s)
+- **Alt+6** - Very slow (1 image/5 sec, 5.0s)
+- **c** - Toggle shuffle
+- **l** - Toggle loop playlist
+
+**Navigation:**
+- **j** - Previous image in playlist
+- **k** - Next image in playlist
+
+**Zoom Controls:**
+- **Alt + =** (Alt + Equals) - Zoom in (incremental)
+- **Alt + -** (Alt + Hyphen/Minus) - Zoom out (incremental)
+- **Alt + z** - Jump to 1x zoom (reset)
+- **Alt + x** - Jump to 2x zoom
+- **Alt + v** - Jump to 3x zoom
+- **Alt + Backspace** - Reset zoom and pan
+
+**Pan Controls:**
+- **Alt + Arrow Keys** - Pan image (Left/Right/Up/Down)
+- **Alt + WASD** - Pan image (A=left, D=right, W=up, S=down)
+- **Ctrl + Left-click + Drag** - Pan by dragging (mpv default)
+
+**Image Management:**
+- **m** - Flag current image as "keep" (writes to `keep.txt` in the same directory)
+- **Shift+Delete** or **Delete** - Move current image to trash and skip to next
+
+**Note:** Standard mpv keys (f for fullscreen, arrow keys, space for pause, etc.) work as usual.
+
+## Options
+
+### image-effects
 
 ```bash
-# Default behavior (upscale smaller, fit mode, downscale larger)
-scripts/flexible-blast.sh ~/pics
+image-effects <effect> <image_dir> [options]
+# or: scripts/image-effects.sh <effect> <image_dir> [options]
 
-# Fill the window (crop to fit)
-scripts/flexible-blast.sh ~/pics --scale-mode fill
-
-# Don't upscale smaller images
-scripts/flexible-blast.sh ~/pics --no-upscale-smaller
-
-# Don't downscale larger images
-scripts/flexible-blast.sh ~/pics --no-downscale-larger
-
-# Custom duration
-scripts/flexible-blast.sh ~/pics --duration 0.005
+Options:
+  --duration, -d SECONDS    Duration per image (default: 0.05)
+  --output, -o FILE          Output file for video effects
+  --resolution, -r SIZE      Output resolution (default: 1920x1080)
+  --fps, -f FPS             Frames per second (default: 30)
+  --limit, -l COUNT         Max images for video effects (default: 5)
 ```
 
-### Scaling Options:
-- **--upscale-smaller** / **--no-upscale-smaller** - Whether to upscale images smaller than window (default: upscale)
-- **--scale-mode** - `fit` (maintain aspect ratio) or `fill` (crop to fill window) (default: fit)
-- **--downscale-larger** / **--no-downscale-larger** - Whether to downscale larger images (default: downscale)
-
-## Examples
+### slideshow
 
 ```bash
-# Create a glitch art video
-scripts/img-effects.sh glitch ~/cool-pics --duration 0.3 --output glitch-art.mp4
+slideshow <image_dir> [options]
+# or: scripts/slideshow.sh <image_dir> [options]
 
-# Color effects with custom resolution
-scripts/img-effects.sh acid ~/pics --resolution 1280x720 --output trip.mp4
+Scaling Options:
+  --scale-mode MODE          'fit' or 'fill' (default: fit)
+  --no-upscale-smaller       Don't upscale smaller images
+  --no-downscale-larger      Don't downscale larger images
+  --duration SECONDS         Duration per image (default: 0.001)
 
-# Distortion effects at 60fps
-scripts/img-effects.sh reality ~/pics --fps 60 --output physics-break.mp4
+Watch Mode (Live File Monitoring):
+  --watch, -w                Watch for new images and add them to playlist
+  --no-recursive              Don't watch subdirectories (only with --watch)
+```
 
-# Matrix-style effects
-scripts/img-effects.sh matrix ~/pics --output matrix-vision.mp4
+**Watch Mode**: When enabled with `--watch`, the slideshow monitors the directory for new image files. When a new image is detected, it's automatically added to the playlist as the next item and the slideshow immediately jumps to it. Requires `fswatch` (install with `brew install fswatch` on macOS).
+
+### images-to-video
+
+```bash
+images-to-video <image_dir> [img_per_sec] [resolution] [output]
+# Example: images-to-video ~/pics 60 1920x1080 out.mp4
+# or: scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
+```
+
+## More Examples
+
+```bash
+# Custom resolution and duration
+image-effects glitch ~/pics --duration 0.3 --resolution 1280x720 --output glitch.mp4
+
+# High frame rate
+image-effects reality ~/pics --fps 60 --output physics-break.mp4
+
+# Process more images
+image-effects acid ~/pics --limit 20 --output trip.mp4
+
+# Fast slideshow
+slideshow ~/pics --duration 0.001
+
+# Live slideshow (watches for new images)
+slideshow ~/pics --watch
+
+# Live slideshow (non-recursive, current directory only)
+slideshow ~/pics --watch --no-recursive
+
+# Simple video
+images-to-video ~/pics 30 1920x1080 slideshow.mp4
 ```
 
 ## Future Plans
