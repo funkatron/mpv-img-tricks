@@ -748,7 +748,7 @@ tile_effect_randomized() {
 
   play_composite_dir() {
     local composite_dir="$1"
-    local first_file=""
+    local composite_files=()
     if [ ! -d "$composite_dir" ]; then
       echo "Composite directory not found: $composite_dir"
       return 1
@@ -757,8 +757,10 @@ tile_effect_randomized() {
       echo "No composite files available to play."
       return 1
     fi
-    first_file=$(find "$composite_dir" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | sort -V | head -1)
-    if [ -z "$first_file" ]; then
+    while IFS= read -r candidate; do
+      composite_files+=("$candidate")
+    done < <(find "$composite_dir" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | sort -V)
+    if [ "${#composite_files[@]}" -eq 0 ]; then
       echo "No readable composite files found."
       return 1
     fi
@@ -769,7 +771,7 @@ tile_effect_randomized() {
       "--hr-seek=yes" \
       "--keep-open=no" \
       "--no-audio" \
-      "--autocreate-playlist=filter" \
+      "--shuffle" \
       "--loop-playlist=inf" \
       "--background=color" \
       "--border=no" \
@@ -777,7 +779,7 @@ tile_effect_randomized() {
       "--input-media-keys=no" \
       "--force-media-title=mpv-img-tricks" \
       "--title=mpv-img-tricks" \
-      "$first_file"
+      "${composite_files[@]}"
   }
 
   CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/tile-randomized"
