@@ -54,12 +54,13 @@ images-to-video ~/pics 60 1920x1080 out.mp4
 ### Live Slideshows (mpv)
 - **basic** - Simple fast slideshow
 - **chaos** - Shuffled rapid-fire with infinite loop
+- **tile** - Live tiled grid slideshow (perfect for ultrawide screens)
 
 ### Video Effects (ffmpeg)
 - **ken-burns** - Smooth zoom/pan transitions
 - **crossfade** - Smooth blending between images
-- **glitch** - Color distortion and corruption effects
-- **acid** - Psychedelic color shifting
+- **glitch** - Data corruption and noise effects
+- **acid** - Color shifting and morphing
 - **reality** - Distortion and transformation effects
 - **kaleido** - Kaleidoscope patterns
 - **matrix** - Digital rain-style effects
@@ -175,7 +176,77 @@ slideshow ~/pics --watch --no-recursive
 
 # Simple video
 images-to-video ~/pics 30 1920x1080 slideshow.mp4
+# Matrix-style effects
+scripts/img-effects.sh matrix ~/pics --output matrix-vision.mp4
+
+# Tiled slideshow examples
+scripts/img-effects.sh tile ~/pics --grid 2x2 --duration 3
+scripts/img-effects.sh tile ~/pics --grid 4x1 --duration 1.5
+scripts/img-effects.sh tile ~/pics --grid 3x2 --duration 2.5
+
+# Randomized tiling examples
+scripts/img-effects.sh tile ~/pics --randomize --group-size 3 --duration 2
+scripts/img-effects.sh tile ~/pics --randomize --group-size 5 --duration 4
 ```
+
+## Tile Effect Details
+
+The **tile** effect creates a live slideshow that displays multiple images simultaneously in a grid layout. It's optimized for ultrawide screens and uses mpv's built-in `hstack` and `vstack` filters for efficient rendering.
+
+### Features:
+- **Automatic screen detection** - Detects your screen resolution for optimal tiling
+- **Ultrawide optimized** - Perfect for 3440x1440, 5120x1440, and other ultrawide displays
+- **Live slideshow** - Images advance through the grid in real-time
+- **Flexible grid sizes** - Support for any grid configuration (1x3, 2x2, 3x2, etc.)
+- **Randomized layouts** - Different grid layouts for each group of images
+- **Group-based tiling** - Process images in customizable groups (3-5 images per group)
+
+### Grid Options:
+- **1x3** - Horizontal strip (3 images across, 1 row)
+- **2x2** - Classic 4-image grid
+- **3x1** - Wide horizontal strip (3 images across)
+- **3x2** - 6-image grid (3 columns, 2 rows)
+- **4x1** - Ultra-wide strip (4 images across)
+
+### Examples:
+```bash
+# Horizontal strip for ultrawide
+scripts/img-effects.sh tile ~/pics --grid 3x1 --duration 2
+
+# Classic 4-image grid
+scripts/img-effects.sh tile ~/pics --grid 2x2 --duration 3
+
+# Wide 6-image layout
+scripts/img-effects.sh tile ~/pics --grid 3x2 --duration 2.5
+
+# Ultra-wide strip
+scripts/img-effects.sh tile ~/pics --grid 4x1 --duration 1.5
+
+# Randomized tiling with different layouts per group
+scripts/img-effects.sh tile ~/pics --randomize --group-size 4 --duration 3
+
+# Small groups with random layouts
+scripts/img-effects.sh tile ~/pics --randomize --group-size 3 --duration 2
+```
+
+### Randomized Tiling:
+When using `--randomize`, each group of images gets a random grid layout from:
+- **1x1** - Single image
+- **1x2** - Vertical strip (2 images)
+- **2x1** - Horizontal strip (2 images)
+- **1x3** - Vertical strip (3 images)
+- **3x1** - Horizontal strip (3 images)
+- **2x2** - Classic 4-image grid
+- **1x4** - Vertical strip (4 images)
+- **4x1** - Horizontal strip (4 images)
+- **2x3** - 6-image grid (2 columns, 3 rows)
+- **3x2** - 6-image grid (3 columns, 2 rows)
+
+The tile effect automatically:
+- Detects your screen resolution using `xrandr`
+- Calculates optimal tile sizes for your display
+- Uses mpv's efficient `hstack`/`vstack` filters
+- Creates a seamless slideshow experience
 
 ## Future Plans
 
