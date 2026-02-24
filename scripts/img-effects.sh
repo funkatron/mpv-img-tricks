@@ -571,17 +571,8 @@ liquid_effect() {
 tile_effect() {
   echo "Creating live tiled slideshow with mpv..."
 
-  # Detect screen resolution for ultrawide optimization
-  if command -v xrandr >/dev/null 2>&1; then
-    SCREEN_RES=$(xrandr --current | grep '*' | head -1 | awk '{print $1}')
-    SCREEN_WIDTH=$(echo "$SCREEN_RES" | cut -d'x' -f1)
-    SCREEN_HEIGHT=$(echo "$SCREEN_RES" | cut -d'x' -f2)
-  else
-    # Fallback to common ultrawide resolutions
-    SCREEN_WIDTH="3440"
-    SCREEN_HEIGHT="1440"
-    SCREEN_RES="${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
-  fi
+  # Detect screen resolution (Linux: xrandr, macOS: system_profiler).
+  detect_screen_resolution
 
   echo "Screen: ${SCREEN_RES}, Duration: ${DURATION}s, Group size: ${GROUP_SIZE}"
 
@@ -592,6 +583,37 @@ tile_effect() {
     echo "Using fixed grid: ${GRID}"
     tile_effect_fixed
   fi
+}
+
+detect_screen_resolution() {
+  local detected=""
+
+  if command -v xrandr >/dev/null 2>&1; then
+    detected=$(xrandr --current 2>/dev/null | awk '/\*/{print $1; exit}')
+  fi
+
+  if [ -z "$detected" ] && command -v system_profiler >/dev/null 2>&1; then
+    detected=$(
+      system_profiler SPDisplaysDataType 2>/dev/null \
+        | sed -nE 's/.*UI Looks like:[[:space:]]*([0-9]+)[[:space:]]*x[[:space:]]*([0-9]+).*/\1x\2/p' \
+        | head -1
+    )
+    if [ -z "$detected" ]; then
+      detected=$(
+        system_profiler SPDisplaysDataType 2>/dev/null \
+          | sed -nE 's/.*Resolution:[[:space:]]*([0-9]+)[[:space:]]*x[[:space:]]*([0-9]+).*/\1x\2/p' \
+          | head -1
+      )
+    fi
+  fi
+
+  if [ -z "$detected" ]; then
+    detected="$RESOLUTION"
+  fi
+
+  SCREEN_RES="$detected"
+  SCREEN_WIDTH=$(echo "$SCREEN_RES" | cut -d'x' -f1)
+  SCREEN_HEIGHT=$(echo "$SCREEN_RES" | cut -d'x' -f2)
 }
 
 tile_effect_fixed() {
@@ -608,14 +630,15 @@ tile_effect_fixed() {
 
   echo "Tile size: ${TILE_WIDTH}x${TILE_HEIGHT}"
 
-  # Build mpv command with hstack/vstack
-  MPV_CMD="mpv"
-  MPV_CMD="${MPV_CMD} --geometry=${SCREEN_RES}+0+0"
-  MPV_CMD="${MPV_CMD} --image-display-duration=${DURATION}"
-  MPV_CMD="${MPV_CMD} --hr-seek=yes"
-  MPV_CMD="${MPV_CMD} --keep-open=no"
-  MPV_CMD="${MPV_CMD} --no-audio"
-  MPV_CMD="${MPV_CMD} --loop-playlist=inf"
+  # Build mpv command with hstack/vstack using arrays (safe for filenames)
+  MPV_ARGS=(
+    "--geometry=${SCREEN_RES}+0+0"
+    "--image-display-duration=${DURATION}"
+    "--hr-seek=yes"
+    "--keep-open=no"
+    "--no-audio"
+    "--loop-playlist=inf"
+  )
 
   # Build lavfi-complex filter for tiling
   LAVFI_COMPLEX=""
@@ -645,30 +668,31 @@ tile_effect_fixed() {
     fi
   fi
 
-  MPV_CMD="${MPV_CMD} --lavfi-complex=\"${LAVFI_COMPLEX}\""
+  MPV_ARGS+=("--lavfi-complex=${LAVFI_COMPLEX}")
 
   # Add image files using --external-file
-  IMAGE_FILES=""
   first_image=true
   while IFS= read -r img; do
     if [ "$first_image" = true ]; then
-      IMAGE_FILES="${IMAGE_FILES} \"${img}\""
+      MPV_ARGS+=("$img")
       first_image=false
     else
-      MPV_CMD="${MPV_CMD} --external-file=\"${img}\""
+      MPV_ARGS+=("--external-file=$img")
     fi
   done < "$TMPLIST"
 
   echo "Starting tiled slideshow..."
-  echo "Command: ${MPV_CMD}${IMAGE_FILES}"
+  if [ "$first_image" = true ]; then
+    echo "No images available for tile effect."
+    return 1
+  fi
 
   # Execute mpv command
-  eval "${MPV_CMD}${IMAGE_FILES}"
+  mpv "${MPV_ARGS[@]}"
 }
 
 tile_effect_randomized() {
-  echo "Creating BRAUN 1960s style randomized slideshow..."
-  echo "Clean, minimalist design with random grid layouts"
+  echo "Creating randomized tiled slideshow..."
 
   # Define possible grid layouts for randomization (filtered by group size)
   GRID_LAYOUTS=(
@@ -686,35 +710,131 @@ tile_effect_randomized() {
     fi
   done
 
+  if [ "${#VALID_LAYOUTS[@]}" -eq 0 ]; then
+    echo "No valid layouts available for group size ${GROUP_SIZE}."
+    return 1
+  fi
+
   echo "Valid layouts for group size ${GROUP_SIZE}: ${VALID_LAYOUTS[*]}"
 
-  # Create a simple slideshow that cycles through images with random layouts
-  # We'll use a basic approach: cycle through images and occasionally show them in grids
-
-  # Build mpv command with BRAUN styling
-  MPV_CMD="mpv"
-  MPV_CMD="${MPV_CMD} --geometry=${SCREEN_RES}+0+0"
-  MPV_CMD="${MPV_CMD} --image-display-duration=${DURATION}"
-  MPV_CMD="${MPV_CMD} --hr-seek=yes"
-  MPV_CMD="${MPV_CMD} --keep-open=no"
-  MPV_CMD="${MPV_CMD} --no-audio"
-  MPV_CMD="${MPV_CMD} --loop-playlist=inf"
-  MPV_CMD="${MPV_CMD} --background=color"
-  MPV_CMD="${MPV_CMD} --border=no"
-  MPV_CMD="${MPV_CMD} --title='BRAUN Slideshow'"
-
-  # Add all images to the playlist
-  IMAGE_FILES=""
+  # Load all image paths into an array.
+  ALL_IMAGES=()
   while IFS= read -r img; do
-    IMAGE_FILES="${IMAGE_FILES} \"${img}\""
+    ALL_IMAGES+=("$img")
   done < "$TMPLIST"
 
-  echo "Starting BRAUN 1960s style slideshow..."
-  echo "Images will cycle through with clean, minimalist presentation"
-  echo "Press 'q' to quit, 'space' to pause, 'n' for next image"
+  if [ "${#ALL_IMAGES[@]}" -eq 0 ]; then
+    echo "No images available for randomized tile effect."
+    return 1
+  fi
 
-  # Execute mpv command
-  eval "${MPV_CMD}${IMAGE_FILES}"
+  COMPOSITE_DIR="$(mktemp -d)"
+  PLAYLIST_FILE="${COMPOSITE_DIR}/playlist.m3u"
+  total_images="${#ALL_IMAGES[@]}"
+  cursor=0
+  slide=0
+  min_possible_slides=$(((total_images + GROUP_SIZE - 1) / GROUP_SIZE))
+  max_possible_slides=$total_images
+
+  echo "Compositing randomized tiled slides..."
+  echo "Estimated slide range: ${min_possible_slides}-${max_possible_slides}"
+  while [ "$cursor" -lt "$total_images" ]; do
+    remaining=$((total_images - cursor))
+
+    # Pick a random layout that can be fully populated by remaining images.
+    CANDIDATE_LAYOUTS=()
+    for layout in "${VALID_LAYOUTS[@]}"; do
+      cols=$(echo "$layout" | cut -d'x' -f1)
+      rows=$(echo "$layout" | cut -d'x' -f2)
+      tiles=$((cols * rows))
+      if [ "$tiles" -le "$remaining" ]; then
+        CANDIDATE_LAYOUTS+=("$layout")
+      fi
+    done
+
+    if [ "${#CANDIDATE_LAYOUTS[@]}" -eq 0 ]; then
+      break
+    fi
+
+    picked_layout="${CANDIDATE_LAYOUTS[$((RANDOM % ${#CANDIDATE_LAYOUTS[@]}))]}"
+    layout_cols=$(echo "$picked_layout" | cut -d'x' -f1)
+    layout_rows=$(echo "$picked_layout" | cut -d'x' -f2)
+    tile_count=$((layout_cols * layout_rows))
+    cell_w=$((SCREEN_WIDTH / layout_cols))
+    cell_h=$((SCREEN_HEIGHT / layout_rows))
+
+    INPUT_ARGS=()
+    for ((i=0; i<tile_count; i++)); do
+      INPUT_ARGS+=("-i" "${ALL_IMAGES[$((cursor + i))]}")
+    done
+
+    FILTER=""
+    for ((i=0; i<tile_count; i++)); do
+      FILTER="${FILTER}[${i}:v]scale=${cell_w}:${cell_h}:force_original_aspect_ratio=increase,crop=${cell_w}:${cell_h}[s${i}];"
+    done
+
+    for ((r=0; r<layout_rows; r++)); do
+      row_labels=""
+      for ((c=0; c<layout_cols; c++)); do
+        idx=$((r * layout_cols + c))
+        row_labels="${row_labels}[s${idx}]"
+      done
+
+      if [ "$layout_cols" -eq 1 ]; then
+        FILTER="${FILTER}${row_labels}copy[row${r}];"
+      else
+        FILTER="${FILTER}${row_labels}hstack=inputs=${layout_cols}[row${r}];"
+      fi
+    done
+
+    out_file=$(printf "%s/%04d.jpg" "$COMPOSITE_DIR" "$slide")
+    if [ "$layout_rows" -eq 1 ]; then
+      FILTER="${FILTER}[row0]copy[out]"
+    else
+      stacked_rows=""
+      for ((r=0; r<layout_rows; r++)); do
+        stacked_rows="${stacked_rows}[row${r}]"
+      done
+      FILTER="${FILTER}${stacked_rows}vstack=inputs=${layout_rows}[out]"
+    fi
+
+    ffmpeg -nostdin -loglevel error \
+      "${INPUT_ARGS[@]}" \
+      -filter_complex "$FILTER" \
+      -map "[out]" \
+      -frames:v 1 \
+      -q:v 2 \
+      "$out_file"
+
+    echo "$out_file" >> "$PLAYLIST_FILE"
+
+    cursor=$((cursor + tile_count))
+    slide=$((slide + 1))
+    printf "\rCompositing... slides: %d | images: %d/%d | layout: %s   " \
+      "$slide" "$cursor" "$total_images" "$picked_layout"
+  done
+  printf "\n"
+
+  if [ ! -s "$PLAYLIST_FILE" ]; then
+    echo "Failed to create randomized tiled slides."
+    rm -rf "$COMPOSITE_DIR"
+    return 1
+  fi
+
+  echo "Created ${slide} randomized tile slides."
+  echo "Starting randomized tiled slideshow..."
+  mpv \
+    "--geometry=${SCREEN_RES}+0+0" \
+    "--image-display-duration=${DURATION}" \
+    "--hr-seek=yes" \
+    "--keep-open=no" \
+    "--no-audio" \
+    "--loop-playlist=inf" \
+    "--background=color" \
+    "--border=no" \
+    "--playlist=${PLAYLIST_FILE}"
+
+  rm -rf "$COMPOSITE_DIR"
 }
 
 crossfade_effect() {
