@@ -43,6 +43,7 @@ CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
 CACHE_VERSION="v2"  # Bump when randomized composite behavior changes
 JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
+SOUND_FILE=""  # Optional sound file during slideshow playback
 
 # Parse command line arguments
 shift  # Remove effect from arguments
@@ -138,6 +139,15 @@ while [[ $# -gt 0 ]]; do
         shift 2
       fi
       ;;
+    --sound|-S)
+      if [[ "$1" == *"="* ]]; then
+        SOUND_FILE="${1#*=}"
+        shift
+      else
+        SOUND_FILE="$2"
+        shift 2
+      fi
+      ;;
     --debug)
       DEBUG="true"
       shift
@@ -176,6 +186,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --frames-per-grid, -fpg  Frames per grid before advancing (default: 1)"
       echo "  --group-size, -gs  Number of images per group for randomization (default: 4)"
       echo "  --jobs, -j N       Parallel render jobs for randomized tile (default: auto)"
+      echo "  --sound, -S FILE   Play sound file during slideshow playback"
       echo "  --debug            Enable shell trace and raw tool output"
       echo "  --randomize, -z  Randomize grid layouts for each group"
       echo "  --recursive, -R  Recurse into subdirectories"
@@ -201,6 +212,14 @@ fi
 
 # Set default directory if not provided
 DIR="${DIR:-.}"
+
+if [ -n "$SOUND_FILE" ]; then
+  SOUND_FILE="${SOUND_FILE/#\~/$HOME}"
+  if [ ! -f "$SOUND_FILE" ]; then
+    echo "Sound file not found: $SOUND_FILE"
+    exit 1
+  fi
+fi
 
 # Extract width and height from resolution
 WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
@@ -252,6 +271,7 @@ get_random_scale() {
 # Effect modules
 basic_effect() {
   echo "Running basic slideshow..."
+  build_audio_args
 
   if [ "$USE_PLAYLIST" = "true" ]; then
     # Use playlist file for large image sets
@@ -282,7 +302,7 @@ EOF
         --image-display-duration="$DURATION" \
         --hr-seek=yes \
         --keep-open=no \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --playlist-start=0 \
         --loop-file=no \
         --script="$LUA_SCRIPT" \
@@ -292,7 +312,7 @@ EOF
         --image-display-duration="$DURATION" \
         --hr-seek=yes \
         --keep-open=no \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --playlist-start=0 \
         --loop-file=no \
         --playlist="$PLAYLIST_FILE" 2>/dev/null
@@ -305,7 +325,7 @@ EOF
         --image-display-duration="$DURATION" \
         --hr-seek=yes \
         --keep-open=no \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --playlist-start=0 \
         --loop-file=no \
         $DIR 2>/dev/null
@@ -315,7 +335,7 @@ EOF
         --image-display-duration="$DURATION" \
         --hr-seek=yes \
         --keep-open=no \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --playlist-start=0 \
         --loop-file=no \
         "$DIR"/*.{jpg,JPG,jpeg,JPEG,png,PNG,webp,WEBP} 2>/dev/null
@@ -325,6 +345,7 @@ EOF
 
 chaos_effect() {
   echo "Running chaos slideshow..."
+  build_audio_args
 
   if [ "$USE_PLAYLIST" = "true" ]; then
     # Use playlist file for large image sets
@@ -356,7 +377,7 @@ EOF
         --shuffle \
         --loop-playlist=inf \
         --hr-seek=yes \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --fs \
         --script="$LUA_SCRIPT" \
         --playlist="$PLAYLIST_FILE" 2>/dev/null
@@ -366,7 +387,7 @@ EOF
         --shuffle \
         --loop-playlist=inf \
         --hr-seek=yes \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --fs \
         --playlist="$PLAYLIST_FILE" 2>/dev/null
     fi
@@ -378,7 +399,7 @@ EOF
         --shuffle \
         --loop-playlist=inf \
         --hr-seek=yes \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --fs \
         $DIR 2>/dev/null
     else
@@ -387,7 +408,7 @@ EOF
         --shuffle \
         --loop-playlist=inf \
         --hr-seek=yes \
-        --no-audio \
+        "${AUDIO_ARGS[@]}" \
         --fs \
         "$DIR"/*.{jpg,JPG,jpeg,JPEG,png,PNG,webp,WEBP} 2>/dev/null
     fi
@@ -599,6 +620,7 @@ liquid_effect() {
 
 tile_effect() {
   echo "Creating live tiled slideshow with mpv..."
+  build_audio_args
 
   # Detect screen resolution (Linux: xrandr, macOS: system_profiler).
   detect_screen_resolution
@@ -627,6 +649,16 @@ run_mpv() {
     )
   else
     mpv "$@"
+  fi
+}
+
+build_audio_args() {
+  AUDIO_ARGS=()
+  if [ -n "$SOUND_FILE" ]; then
+    AUDIO_ARGS+=("--audio-file=$SOUND_FILE")
+    AUDIO_ARGS+=("--audio-display=no")
+  else
+    AUDIO_ARGS+=("--no-audio")
   fi
 }
 
@@ -861,7 +893,7 @@ tile_effect_fixed() {
       "--image-display-duration=${DURATION}" \
       "--hr-seek=yes" \
       "--keep-open=no" \
-      "--no-audio" \
+      "${AUDIO_ARGS[@]}" \
       "--loop-playlist=inf" \
       "--media-controls=no" \
       "--input-media-keys=no" \
@@ -879,13 +911,13 @@ tile_effect_fixed() {
     "--image-display-duration=${DURATION}"
     "--hr-seek=yes"
     "--keep-open=no"
-    "--no-audio"
     "--loop-playlist=inf"
     "--media-controls=no"
     "--input-media-keys=no"
     "--force-media-title=mpv-img-tricks"
     "--title=mpv-img-tricks"
   )
+  MPV_ARGS+=("${AUDIO_ARGS[@]}")
 
   # Build lavfi-complex filter for tiling
   LAVFI_COMPLEX=""
@@ -1017,7 +1049,7 @@ tile_effect_randomized() {
       "--image-display-duration=${DURATION}" \
       "--hr-seek=yes" \
       "--keep-open=no" \
-      "--no-audio" \
+      "${AUDIO_ARGS[@]}" \
       "--shuffle" \
       "--loop-playlist=inf" \
       "--background=color" \
