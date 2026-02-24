@@ -44,6 +44,11 @@ CACHE_VERSION="v2"  # Bump when randomized composite behavior changes
 JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
 SOUND_FILE=""  # Optional sound file during slideshow playback
+SOUND_TRIM_DB="-45"  # Leading silence trim threshold in dB
+BACKGROUND_AUDIO_PID=""  # Background mpv PID for continuous tile audio
+PREPARED_SOUND_FILE=""  # Resolved/processed sound file path used at runtime
+TEMP_SOUND_FILE=""  # Temp trimmed sound file for cleanup
+TMPLIST=""  # Temp list file used during image discovery
 
 # Parse command line arguments
 shift  # Remove effect from arguments
@@ -148,6 +153,15 @@ while [[ $# -gt 0 ]]; do
         shift 2
       fi
       ;;
+    --sound-trim-db)
+      if [[ "$1" == *"="* ]]; then
+        SOUND_TRIM_DB="${1#*=}"
+        shift
+      else
+        SOUND_TRIM_DB="$2"
+        shift 2
+      fi
+      ;;
     --debug)
       DEBUG="true"
       shift
@@ -187,6 +201,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --group-size, -gs  Number of images per group for randomization (default: 4)"
       echo "  --jobs, -j N       Parallel render jobs for randomized tile (default: auto)"
       echo "  --sound, -S FILE   Play sound file during slideshow playback"
+      echo "  --sound-trim-db N  Leading silence trim threshold in dB (default: -45)"
       echo "  --debug            Enable shell trace and raw tool output"
       echo "  --randomize, -z  Randomize grid layouts for each group"
       echo "  --recursive, -R  Recurse into subdirectories"
@@ -220,6 +235,24 @@ if [ -n "$SOUND_FILE" ]; then
     exit 1
   fi
 fi
+if ! [[ "$SOUND_TRIM_DB" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+  echo "Invalid --sound-trim-db value: $SOUND_TRIM_DB"
+  exit 1
+fi
+
+cleanup() {
+  if [ -n "${BACKGROUND_AUDIO_PID:-}" ]; then
+    kill "${BACKGROUND_AUDIO_PID}" 2>/dev/null || true
+    wait "${BACKGROUND_AUDIO_PID}" 2>/dev/null || true
+  fi
+  if [ -n "${TEMP_SOUND_FILE:-}" ] && [ -f "${TEMP_SOUND_FILE}" ]; then
+    rm -f "${TEMP_SOUND_FILE}"
+  fi
+  if [ -n "${TMPLIST:-}" ] && [ -f "${TMPLIST}" ]; then
+    rm -f "${TMPLIST}"
+  fi
+}
+trap cleanup EXIT INT TERM
 
 # Extract width and height from resolution
 WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
@@ -620,7 +653,12 @@ liquid_effect() {
 
 tile_effect() {
   echo "Creating live tiled slideshow with mpv..."
-  build_audio_args
+  if [ -n "$SOUND_FILE" ]; then
+    start_background_audio_loop
+    AUDIO_ARGS=("--no-audio")
+  else
+    build_audio_args
+  fi
 
   # Detect screen resolution (Linux: xrandr, macOS: system_profiler).
   detect_screen_resolution
@@ -660,6 +698,58 @@ build_audio_args() {
   else
     AUDIO_ARGS+=("--no-audio")
   fi
+}
+
+prepare_sound_file() {
+  PREPARED_SOUND_FILE="$SOUND_FILE"
+  if [ -z "$SOUND_FILE" ]; then
+    return 0
+  fi
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    return 0
+  fi
+
+  TEMP_SOUND_FILE="$(mktemp "/tmp/mpv-img-tricks-sound-XXXXXX.mp3")"
+  if ffmpeg -nostdin -loglevel error -y \
+    -i "$SOUND_FILE" \
+    -af "silenceremove=start_periods=1:start_silence=0:start_threshold=${SOUND_TRIM_DB}dB" \
+    "$TEMP_SOUND_FILE"; then
+    if [ -s "$TEMP_SOUND_FILE" ]; then
+      PREPARED_SOUND_FILE="$TEMP_SOUND_FILE"
+      echo "Trimmed leading silence from sound file."
+    else
+      rm -f "$TEMP_SOUND_FILE"
+      TEMP_SOUND_FILE=""
+    fi
+  else
+    rm -f "$TEMP_SOUND_FILE"
+    TEMP_SOUND_FILE=""
+  fi
+}
+
+start_background_audio_loop() {
+  if [ -z "$SOUND_FILE" ]; then
+    return 0
+  fi
+  if [ -n "${BACKGROUND_AUDIO_PID:-}" ]; then
+    return 0
+  fi
+  prepare_sound_file
+  local audio_path="$PREPARED_SOUND_FILE"
+  if [ -z "$audio_path" ] || [ ! -f "$audio_path" ]; then
+    echo "Sound file not playable: $SOUND_FILE"
+    return 1
+  fi
+  mpv \
+    --no-video \
+    --audio-display=no \
+    --keep-open=no \
+    --loop-file=inf \
+    --force-window=no \
+    --title=mpv-img-tricks-audio \
+    "$audio_path" >/dev/null 2>&1 &
+  BACKGROUND_AUDIO_PID="$!"
+  echo "Started continuous audio loop."
 }
 
 get_rss_kb() {
