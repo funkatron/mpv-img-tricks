@@ -42,6 +42,7 @@ RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scali
 CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
 CACHE_VERSION="v2"  # Bump when randomized composite behavior changes
 JOBS="auto"  # Parallel jobs for randomized tile compositing
+DEBUG="false"  # Enable shell tracing and raw tool output
 
 # Parse command line arguments
 shift  # Remove effect from arguments
@@ -137,6 +138,10 @@ while [[ $# -gt 0 ]]; do
         shift 2
       fi
       ;;
+    --debug)
+      DEBUG="true"
+      shift
+      ;;
     --randomize|-z)
       RANDOMIZE="true"
       shift
@@ -171,6 +176,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --frames-per-grid, -fpg  Frames per grid before advancing (default: 1)"
       echo "  --group-size, -gs  Number of images per group for randomization (default: 4)"
       echo "  --jobs, -j N       Parallel render jobs for randomized tile (default: auto)"
+      echo "  --debug            Enable shell trace and raw tool output"
       echo "  --randomize, -z  Randomize grid layouts for each group"
       echo "  --recursive, -R  Recurse into subdirectories"
       echo "  --no-cache       Rebuild randomized tile composites (default: cache enabled)"
@@ -187,6 +193,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Enable shell tracing after arg parsing so debug focuses on runtime logic.
+if [ "$DEBUG" = "true" ]; then
+  set -x
+fi
 
 # Set default directory if not provided
 DIR="${DIR:-.}"
@@ -603,6 +614,43 @@ tile_effect() {
   fi
 }
 
+run_mpv() {
+  if [ "$(uname -s)" = "Darwin" ] && [ "$DEBUG" != "true" ]; then
+    # Filter known noisy macOS logs while keeping real mpv/ffmpeg errors visible.
+    mpv "$@" 2> >(
+      awk '
+        /CFURLCopyResourcePropertyForKey failed because it was passed a URL which has no scheme/ { next }
+        /\+\[IMKClient subclass\]: chose IMKClient_Modern/ { next }
+        /\+\[IMKInputSession subclass\]: chose IMKInputSession_Modern/ { next }
+        { print }
+      ' >&2
+    )
+  else
+    mpv "$@"
+  fi
+}
+
+get_rss_kb() {
+  local pid="$1"
+  local rss
+  rss=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [[ "$rss" =~ ^[0-9]+$ ]]; then
+    echo "$rss"
+  else
+    echo "0"
+  fi
+}
+
+sum_active_rss_kb() {
+  local total=0
+  local pid rss
+  for pid in "${ACTIVE_PIDS[@]:-}"; do
+    rss=$(get_rss_kb "$pid")
+    total=$((total + rss))
+  done
+  echo "$total"
+}
+
 detect_screen_resolution() {
   local detected=""
 
@@ -639,14 +687,191 @@ tile_effect_fixed() {
   GRID_COLS=$(echo "$GRID" | cut -d'x' -f1)
   GRID_ROWS=$(echo "$GRID" | cut -d'x' -f2)
   TILE_COUNT=$((GRID_COLS * GRID_ROWS))
+  INPUT_COUNT=$(wc -l < "$TMPLIST")
 
-  echo "Grid: ${GRID_COLS}x${GRID_ROWS}, Tile count: ${TILE_COUNT}"
+  echo "Fixed tile mode"
+  echo "Grid: ${GRID_COLS}x${GRID_ROWS}, tiles per frame: ${TILE_COUNT}, input images: ${INPUT_COUNT}"
 
   # Calculate optimal tile size for screen
   TILE_WIDTH=$((SCREEN_WIDTH / GRID_COLS))
   TILE_HEIGHT=$((SCREEN_HEIGHT / GRID_ROWS))
 
   echo "Tile size: ${TILE_WIDTH}x${TILE_HEIGHT}"
+
+  # Build generic fixed-grid composite filter (used for slideshow rendering).
+  FIXED_COMPOSITE_FILTER=""
+  for ((i=0; i<TILE_COUNT; i++)); do
+    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}[${i}:v]scale=${TILE_WIDTH}:${TILE_HEIGHT}:force_original_aspect_ratio=increase,crop=${TILE_WIDTH}:${TILE_HEIGHT}[s${i}];"
+  done
+  for ((r=0; r<GRID_ROWS; r++)); do
+    row_labels=""
+    for ((c=0; c<GRID_COLS; c++)); do
+      idx=$((r * GRID_COLS + c))
+      row_labels="${row_labels}[s${idx}]"
+    done
+    if [ "$GRID_COLS" -eq 1 ]; then
+      FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}${row_labels}copy[row${r}];"
+    else
+      FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}${row_labels}hstack=inputs=${GRID_COLS}[row${r}];"
+    fi
+  done
+  if [ "$GRID_ROWS" -eq 1 ]; then
+    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}[row0]copy[out]"
+  else
+    stacked_rows=""
+    for ((r=0; r<GRID_ROWS; r++)); do
+      stacked_rows="${stacked_rows}[row${r}]"
+    done
+    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}${stacked_rows}vstack=inputs=${GRID_ROWS}[out]"
+  fi
+
+  if [ "$INPUT_COUNT" -gt "$TILE_COUNT" ]; then
+    echo "Fixed grid slideshow mode: building composites across all images..."
+    COMPOSITE_DIR="$(mktemp -d)"
+    ALL_IMAGES=()
+    while IFS= read -r img; do
+      ALL_IMAGES+=("$img")
+    done < "$TMPLIST"
+
+    total_images="${#ALL_IMAGES[@]}"
+    slide=0
+    cursor=0
+    completed_jobs=0
+    ACTIVE_PIDS=()
+    render_failures=0
+
+    CPU_COUNT=1
+    if command -v sysctl >/dev/null 2>&1; then
+      CPU_COUNT=$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+    elif command -v nproc >/dev/null 2>&1; then
+      CPU_COUNT=$(nproc 2>/dev/null || echo 1)
+    fi
+    if [ -z "$CPU_COUNT" ] || [ "$CPU_COUNT" -lt 1 ]; then
+      CPU_COUNT=1
+    fi
+
+    if [ "$JOBS" = "auto" ]; then
+      PARALLEL_JOBS=$((CPU_COUNT / 2))
+      if [ "$PARALLEL_JOBS" -lt 1 ]; then
+        PARALLEL_JOBS=1
+      fi
+    elif [[ "$JOBS" =~ ^[0-9]+$ ]] && [ "$JOBS" -ge 1 ]; then
+      PARALLEL_JOBS="$JOBS"
+    else
+      echo "Invalid --jobs value '$JOBS'; using auto."
+      PARALLEL_JOBS=$((CPU_COUNT / 2))
+      if [ "$PARALLEL_JOBS" -lt 1 ]; then
+        PARALLEL_JOBS=1
+      fi
+    fi
+
+    MAX_PARALLEL_JOBS=$((CPU_COUNT / 2))
+    if [ "$MAX_PARALLEL_JOBS" -lt 1 ]; then
+      MAX_PARALLEL_JOBS=1
+    fi
+    if [ "$PARALLEL_JOBS" -gt "$MAX_PARALLEL_JOBS" ]; then
+      PARALLEL_JOBS="$MAX_PARALLEL_JOBS"
+    fi
+
+    render_fixed_slide() {
+      local out_file="$1"
+      local filter="$2"
+      shift 2
+      nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+        "$@" \
+        -filter_complex "$filter" \
+        -map "[out]" \
+        -frames:v 1 \
+        -q:v 2 \
+        "$out_file"
+    }
+
+    echo "Using ${PARALLEL_JOBS} render job(s) on ${CPU_COUNT} CPU core(s)"
+    while [ "$cursor" -lt "$total_images" ]; do
+      INPUT_ARGS=()
+      for ((i=0; i<TILE_COUNT; i++)); do
+        idx=$((cursor + i))
+        if [ "$idx" -ge "$total_images" ]; then
+          idx=$((total_images - 1))
+        fi
+        INPUT_ARGS+=("-i" "${ALL_IMAGES[$idx]}")
+      done
+
+      out_file=$(printf "%s/%04d.jpg" "$COMPOSITE_DIR" "$slide")
+      if [ "$PARALLEL_JOBS" -gt 1 ]; then
+        render_fixed_slide "$out_file" "$FIXED_COMPOSITE_FILTER" "${INPUT_ARGS[@]}" &
+        ACTIVE_PIDS+=("$!")
+        while [ "${#ACTIVE_PIDS[@]}" -ge "$PARALLEL_JOBS" ]; do
+          if wait "${ACTIVE_PIDS[0]}"; then
+            :
+          else
+            render_failures=$((render_failures + 1))
+          fi
+          ACTIVE_PIDS=("${ACTIVE_PIDS[@]:1}")
+          completed_jobs=$((completed_jobs + 1))
+        done
+      else
+        if render_fixed_slide "$out_file" "$FIXED_COMPOSITE_FILTER" "${INPUT_ARGS[@]}"; then
+          :
+        else
+          render_failures=$((render_failures + 1))
+        fi
+        completed_jobs=$((completed_jobs + 1))
+      fi
+
+      slide=$((slide + 1))
+      cursor=$((cursor + TILE_COUNT))
+      printf "\rCompositing fixed tiles... queued: %d | done: %d | images: %d/%d   " \
+        "$slide" "$completed_jobs" "$cursor" "$total_images"
+    done
+
+    for pid in "${ACTIVE_PIDS[@]}"; do
+      if wait "$pid"; then
+        :
+      else
+        render_failures=$((render_failures + 1))
+      fi
+      completed_jobs=$((completed_jobs + 1))
+      printf "\rCompositing fixed tiles... queued: %d | done: %d | images: %d/%d   " \
+        "$slide" "$completed_jobs" "$cursor" "$total_images"
+    done
+    printf "\n"
+
+    if [ "$render_failures" -gt 0 ]; then
+      echo "Fixed-grid compositing failed for ${render_failures} slide(s)."
+      rm -rf "$COMPOSITE_DIR"
+      return 1
+    fi
+
+    COMPOSITE_FILES=()
+    while IFS= read -r img; do
+      COMPOSITE_FILES+=("$img")
+    done < <(find "$COMPOSITE_DIR" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | sort -V)
+
+    if [ "${#COMPOSITE_FILES[@]}" -eq 0 ]; then
+      echo "Failed to create fixed-grid composites."
+      rm -rf "$COMPOSITE_DIR"
+      return 1
+    fi
+
+    echo "Created ${#COMPOSITE_FILES[@]} fixed-grid composites."
+    echo "Starting tiled slideshow..."
+    run_mpv \
+      "--geometry=${SCREEN_RES}+0+0" \
+      "--image-display-duration=${DURATION}" \
+      "--hr-seek=yes" \
+      "--keep-open=no" \
+      "--no-audio" \
+      "--loop-playlist=inf" \
+      "--media-controls=no" \
+      "--input-media-keys=no" \
+      "--force-media-title=mpv-img-tricks" \
+      "--title=mpv-img-tricks" \
+      "${COMPOSITE_FILES[@]}"
+
+    rm -rf "$COMPOSITE_DIR"
+    return 0
+  fi
 
   # Build mpv command with hstack/vstack using arrays (safe for filenames)
   MPV_ARGS=(
@@ -656,6 +881,10 @@ tile_effect_fixed() {
     "--keep-open=no"
     "--no-audio"
     "--loop-playlist=inf"
+    "--media-controls=no"
+    "--input-media-keys=no"
+    "--force-media-title=mpv-img-tricks"
+    "--title=mpv-img-tricks"
   )
 
   # Build lavfi-complex filter for tiling
@@ -686,16 +915,29 @@ tile_effect_fixed() {
     fi
   fi
 
+  if [ -z "$LAVFI_COMPLEX" ]; then
+    echo "Unsupported fixed grid '${GRID}' for current fast path."
+    echo "Supported fixed grids: 1x1, 1x2, 2x1, 1x3, 3x1, 1x4, 4x1, 2x2, 3x2, 2x3"
+    return 1
+  fi
+
   MPV_ARGS+=("--lavfi-complex=${LAVFI_COMPLEX}")
+  echo "lavfi: ${LAVFI_COMPLEX}"
 
   # Add image files using --external-file
   first_image=true
+  attached_files=0
   while IFS= read -r img; do
+    if [ "$attached_files" -ge "$TILE_COUNT" ]; then
+      break
+    fi
     if [ "$first_image" = true ]; then
       MPV_ARGS+=("$img")
       first_image=false
+      attached_files=1
     else
       MPV_ARGS+=("--external-file=$img")
+      attached_files=$((attached_files + 1))
     fi
   done < "$TMPLIST"
 
@@ -704,36 +946,41 @@ tile_effect_fixed() {
     echo "No images available for tile effect."
     return 1
   fi
+  echo "Attached images to mpv: ${attached_files}"
+  if [ "$DEBUG" = "true" ]; then
+    echo "mpv args count: ${#MPV_ARGS[@]}"
+  fi
 
   # Execute mpv command
-  mpv "${MPV_ARGS[@]}"
+  run_mpv "${MPV_ARGS[@]}"
 }
 
 tile_effect_randomized() {
   echo "Creating randomized tiled slideshow..."
 
-  # Define possible grid layouts for randomization (filtered by group size)
-  GRID_LAYOUTS=(
-    "1x1" "1x2" "2x1" "1x3" "3x1" "2x2" "1x4" "4x1" "2x3" "3x2"
-  )
-
-  # Filter layouts to only include those that can fit the group size
-  VALID_LAYOUTS=()
-  for layout in "${GRID_LAYOUTS[@]}"; do
-    cols=$(echo "$layout" | cut -d'x' -f1)
-    rows=$(echo "$layout" | cut -d'x' -f2)
-    tile_count=$((cols * rows))
-    if [ $tile_count -le $GROUP_SIZE ]; then
-      VALID_LAYOUTS+=("$layout")
-    fi
-  done
-
-  if [ "${#VALID_LAYOUTS[@]}" -eq 0 ]; then
-    echo "No valid layouts available for group size ${GROUP_SIZE}."
+  if ! [[ "$GROUP_SIZE" =~ ^[0-9]+$ ]] || [ "$GROUP_SIZE" -lt 1 ]; then
+    echo "Invalid group size '${GROUP_SIZE}'. Expected a positive integer."
     return 1
   fi
 
-  echo "Valid layouts for group size ${GROUP_SIZE}: ${VALID_LAYOUTS[*]}"
+  # Dynamic rectangular layouts: every cols x rows where cols*rows <= GROUP_SIZE.
+  # This removes hardcoded caps and enables more experimental compositions.
+  DYNAMIC_LAYOUTS=()
+  for ((cols=1; cols<=GROUP_SIZE; cols++)); do
+    for ((rows=1; rows<=GROUP_SIZE; rows++)); do
+      tiles=$((cols * rows))
+      if [ "$tiles" -le "$GROUP_SIZE" ]; then
+        DYNAMIC_LAYOUTS+=("${cols}x${rows}:${tiles}")
+      fi
+    done
+  done
+
+  if [ "${#DYNAMIC_LAYOUTS[@]}" -eq 0 ]; then
+    echo "No layouts generated for group size ${GROUP_SIZE}."
+    return 1
+  fi
+
+  echo "Dynamic layout pool: ${#DYNAMIC_LAYOUTS[@]} layouts up to ${GROUP_SIZE} tiles"
 
   # Load all image paths into an array.
   ALL_IMAGES=()
@@ -765,7 +1012,7 @@ tile_effect_randomized() {
       return 1
     fi
 
-    mpv \
+    run_mpv \
       "--geometry=${SCREEN_RES}+0+0" \
       "--image-display-duration=${DURATION}" \
       "--hr-seek=yes" \
@@ -793,7 +1040,7 @@ tile_effect_randomized() {
     echo "recursive=${RECURSIVE}"
     echo "screen=${SCREEN_RES}"
     echo "group_size=${GROUP_SIZE}"
-    echo "layouts=${VALID_LAYOUTS[*]}"
+    echo "layout_mode=dynamic"
   } > "$cache_key_tmp"
 
   if command -v shasum >/dev/null 2>&1; then
@@ -829,6 +1076,11 @@ tile_effect_randomized() {
   completed_jobs=0
   ACTIVE_PIDS=()
   render_failures=0
+  MEM_SAMPLE_INTERVAL=25
+  BASE_SELF_RSS_KB=$(get_rss_kb "$$")
+  PEAK_SELF_RSS_KB="$BASE_SELF_RSS_KB"
+  PEAK_ACTIVE_RSS_KB=0
+  LEAK_WARNED="false"
   min_possible_slides=$(((total_images + GROUP_SIZE - 1) / GROUP_SIZE))
   max_possible_slides=$total_images
 
@@ -843,8 +1095,8 @@ tile_effect_randomized() {
   fi
 
   if [ "$JOBS" = "auto" ]; then
-    # Leave one core free by default to keep the desktop responsive.
-    PARALLEL_JOBS=$((CPU_COUNT - 1))
+    # Use half of available CPU cores by default to reduce RAM pressure.
+    PARALLEL_JOBS=$((CPU_COUNT / 2))
     if [ "$PARALLEL_JOBS" -lt 1 ]; then
       PARALLEL_JOBS=1
     fi
@@ -852,14 +1104,18 @@ tile_effect_randomized() {
     PARALLEL_JOBS="$JOBS"
   else
     echo "Invalid --jobs value '$JOBS'; using auto."
-    PARALLEL_JOBS=$((CPU_COUNT - 1))
+    PARALLEL_JOBS=$((CPU_COUNT / 2))
     if [ "$PARALLEL_JOBS" -lt 1 ]; then
       PARALLEL_JOBS=1
     fi
   fi
 
-  if [ "$PARALLEL_JOBS" -gt "$CPU_COUNT" ]; then
-    PARALLEL_JOBS="$CPU_COUNT"
+  MAX_PARALLEL_JOBS=$((CPU_COUNT / 2))
+  if [ "$MAX_PARALLEL_JOBS" -lt 1 ]; then
+    MAX_PARALLEL_JOBS=1
+  fi
+  if [ "$PARALLEL_JOBS" -gt "$MAX_PARALLEL_JOBS" ]; then
+    PARALLEL_JOBS="$MAX_PARALLEL_JOBS"
   fi
 
   render_randomized_slide() {
@@ -882,12 +1138,11 @@ tile_effect_randomized() {
   while [ "$cursor" -lt "$total_images" ]; do
     remaining=$((total_images - cursor))
 
-    # Pick a random layout that can be fully populated by remaining images.
+    # Pick a random dynamic layout that can be populated by remaining images.
     CANDIDATE_LAYOUTS=()
-    for layout in "${VALID_LAYOUTS[@]}"; do
-      cols=$(echo "$layout" | cut -d'x' -f1)
-      rows=$(echo "$layout" | cut -d'x' -f2)
-      tiles=$((cols * rows))
+    for layout_entry in "${DYNAMIC_LAYOUTS[@]}"; do
+      layout="${layout_entry%%:*}"
+      tiles="${layout_entry##*:}"
       if [ "$tiles" -le "$remaining" ]; then
         CANDIDATE_LAYOUTS+=("$layout")
       fi
@@ -966,6 +1221,26 @@ tile_effect_randomized() {
     slide=$((slide + 1))
     printf "\rCompositing... queued: %d | done: %d | images: %d/%d | layout: %s   " \
       "$slide" "$completed_jobs" "$cursor" "$total_images" "$picked_layout"
+
+    if [ $((slide % MEM_SAMPLE_INTERVAL)) -eq 0 ]; then
+      SELF_RSS_KB=$(get_rss_kb "$$")
+      ACTIVE_RSS_KB=$(sum_active_rss_kb)
+      if [ "$SELF_RSS_KB" -gt "$PEAK_SELF_RSS_KB" ]; then
+        PEAK_SELF_RSS_KB="$SELF_RSS_KB"
+      fi
+      if [ "$ACTIVE_RSS_KB" -gt "$PEAK_ACTIVE_RSS_KB" ]; then
+        PEAK_ACTIVE_RSS_KB="$ACTIVE_RSS_KB"
+      fi
+      if [ "$LEAK_WARNED" != "true" ] && [ "$SELF_RSS_KB" -gt $((BASE_SELF_RSS_KB + 524288)) ]; then
+        echo ""
+        echo "Warning: script RSS grew >512MB (possible memory pressure)."
+        LEAK_WARNED="true"
+      fi
+      if [ "$DEBUG" = "true" ]; then
+        echo ""
+        echo "mem: self=$((SELF_RSS_KB / 1024))MB active_ffmpeg=$((ACTIVE_RSS_KB / 1024))MB"
+      fi
+    fi
   done
 
   for pid in "${ACTIVE_PIDS[@]}"; do
@@ -979,6 +1254,12 @@ tile_effect_randomized() {
       "$slide" "$completed_jobs" "$cursor" "$total_images"
   done
   printf "\n"
+
+  FINAL_SELF_RSS_KB=$(get_rss_kb "$$")
+  if [ "$FINAL_SELF_RSS_KB" -gt "$PEAK_SELF_RSS_KB" ]; then
+    PEAK_SELF_RSS_KB="$FINAL_SELF_RSS_KB"
+  fi
+  echo "Memory peak: script=${PEAK_SELF_RSS_KB}KB, active_ffmpeg=${PEAK_ACTIVE_RSS_KB}KB"
 
   if [ "$render_failures" -gt 0 ]; then
     echo "Compositing failed for ${render_failures} slide(s)."
