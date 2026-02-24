@@ -39,6 +39,9 @@ RANDOMIZE="false"  # Whether to randomize grid layouts
 RECURSIVE="false"  # Whether to recurse into subdirectories
 USE_PLAYLIST="false"  # Whether to use playlist file for large image sets
 RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scaling
+CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
+CACHE_VERSION="v2"  # Bump when randomized composite behavior changes
+JOBS="auto"  # Parallel jobs for randomized tile compositing
 
 # Parse command line arguments
 shift  # Remove effect from arguments
@@ -125,8 +128,21 @@ while [[ $# -gt 0 ]]; do
         shift 2
       fi
       ;;
-    --randomize|-r)
+    --jobs|-j)
+      if [[ "$1" == *"="* ]]; then
+        JOBS="${1#*=}"
+        shift
+      else
+        JOBS="$2"
+        shift 2
+      fi
+      ;;
+    --randomize|-z)
       RANDOMIZE="true"
+      shift
+      ;;
+    --no-cache)
+      CACHE_COMPOSITES="false"
       shift
       ;;
     --recursive|-R)
@@ -154,8 +170,10 @@ while [[ $# -gt 0 ]]; do
       echo "  --spacing, -s    Spacing between tiles in pixels (default: 10)"
       echo "  --frames-per-grid, -fpg  Frames per grid before advancing (default: 1)"
       echo "  --group-size, -gs  Number of images per group for randomization (default: 4)"
-      echo "  --randomize, -r  Randomize grid layouts for each group"
+      echo "  --jobs, -j N       Parallel render jobs for randomized tile (default: auto)"
+      echo "  --randomize, -z  Randomize grid layouts for each group"
       echo "  --recursive, -R  Recurse into subdirectories"
+      echo "  --no-cache       Rebuild randomized tile composites (default: cache enabled)"
       echo "  --playlist, -p   Use playlist file for large image sets (ensures all images are loaded)"
       echo "  --random-scale, -rs  Randomly alternate between fill and fit scaling modes"
       exit 0
@@ -728,16 +746,137 @@ tile_effect_randomized() {
     return 1
   fi
 
-  COMPOSITE_DIR="$(mktemp -d)"
-  PLAYLIST_FILE="${COMPOSITE_DIR}/playlist.m3u"
+  play_composite_dir() {
+    local composite_dir="$1"
+    local first_file=""
+    if [ ! -d "$composite_dir" ]; then
+      echo "Composite directory not found: $composite_dir"
+      return 1
+    fi
+    if ! compgen -G "${composite_dir}/*.jpg" > /dev/null; then
+      echo "No composite files available to play."
+      return 1
+    fi
+    first_file=$(find "$composite_dir" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | sort -V | head -1)
+    if [ -z "$first_file" ]; then
+      echo "No readable composite files found."
+      return 1
+    fi
+
+    mpv \
+      "--geometry=${SCREEN_RES}+0+0" \
+      "--image-display-duration=${DURATION}" \
+      "--hr-seek=yes" \
+      "--keep-open=no" \
+      "--no-audio" \
+      "--autocreate-playlist=filter" \
+      "--loop-playlist=inf" \
+      "--background=color" \
+      "--border=no" \
+      "--media-controls=no" \
+      "--input-media-keys=no" \
+      "--force-media-title=mpv-img-tricks" \
+      "--title=mpv-img-tricks" \
+      "$first_file"
+  }
+
+  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/tile-randomized"
+  cache_used="false"
+  cache_key_tmp="$(mktemp)"
+  {
+    # Stable cache key: prefer reuse unless user requests --no-cache.
+    echo "cache_version=${CACHE_VERSION}"
+    echo "effect=tile-randomized"
+    echo "source=${DIR}"
+    echo "recursive=${RECURSIVE}"
+    echo "screen=${SCREEN_RES}"
+    echo "group_size=${GROUP_SIZE}"
+    echo "layouts=${VALID_LAYOUTS[*]}"
+  } > "$cache_key_tmp"
+
+  if command -v shasum >/dev/null 2>&1; then
+    cache_key="$(shasum -a 256 "$cache_key_tmp" | awk '{print $1}')"
+  else
+    cache_key="$(cksum "$cache_key_tmp" | awk '{print $1 "-" $2}')"
+  fi
+  rm -f "$cache_key_tmp"
+
+  if [ "$CACHE_COMPOSITES" = "true" ]; then
+    mkdir -p "$CACHE_ROOT"
+    COMPOSITE_DIR="${CACHE_ROOT}/${cache_key}"
+    PLAYLIST_FILE="${COMPOSITE_DIR}/playlist.m3u"
+    if [ -d "$COMPOSITE_DIR" ] && [ -s "$PLAYLIST_FILE" ]; then
+      echo "Using cached randomized composites: ${COMPOSITE_DIR}"
+      if play_composite_dir "$COMPOSITE_DIR"; then
+        return 0
+      else
+        echo "Cached composites missing/unplayable; rebuilding cache."
+      fi
+    fi
+    rm -rf "$COMPOSITE_DIR"
+    mkdir -p "$COMPOSITE_DIR"
+    cache_used="true"
+  else
+    COMPOSITE_DIR="$(mktemp -d)"
+    PLAYLIST_FILE="${COMPOSITE_DIR}/playlist.m3u"
+  fi
+
   total_images="${#ALL_IMAGES[@]}"
   cursor=0
   slide=0
+  completed_jobs=0
+  ACTIVE_PIDS=()
+  render_failures=0
   min_possible_slides=$(((total_images + GROUP_SIZE - 1) / GROUP_SIZE))
   max_possible_slides=$total_images
 
+  CPU_COUNT=1
+  if command -v sysctl >/dev/null 2>&1; then
+    CPU_COUNT=$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+  elif command -v nproc >/dev/null 2>&1; then
+    CPU_COUNT=$(nproc 2>/dev/null || echo 1)
+  fi
+  if [ -z "$CPU_COUNT" ] || [ "$CPU_COUNT" -lt 1 ]; then
+    CPU_COUNT=1
+  fi
+
+  if [ "$JOBS" = "auto" ]; then
+    # Leave one core free by default to keep the desktop responsive.
+    PARALLEL_JOBS=$((CPU_COUNT - 1))
+    if [ "$PARALLEL_JOBS" -lt 1 ]; then
+      PARALLEL_JOBS=1
+    fi
+  elif [[ "$JOBS" =~ ^[0-9]+$ ]] && [ "$JOBS" -ge 1 ]; then
+    PARALLEL_JOBS="$JOBS"
+  else
+    echo "Invalid --jobs value '$JOBS'; using auto."
+    PARALLEL_JOBS=$((CPU_COUNT - 1))
+    if [ "$PARALLEL_JOBS" -lt 1 ]; then
+      PARALLEL_JOBS=1
+    fi
+  fi
+
+  if [ "$PARALLEL_JOBS" -gt "$CPU_COUNT" ]; then
+    PARALLEL_JOBS="$CPU_COUNT"
+  fi
+
+  render_randomized_slide() {
+    local out_file="$1"
+    local filter="$2"
+    shift 2
+    # Use one ffmpeg thread per job to avoid oversubscribing CPUs.
+    nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+      "$@" \
+      -filter_complex "$filter" \
+      -map "[out]" \
+      -frames:v 1 \
+      -q:v 2 \
+      "$out_file"
+  }
+
   echo "Compositing randomized tiled slides..."
   echo "Estimated slide range: ${min_possible_slides}-${max_possible_slides}"
+  echo "Using ${PARALLEL_JOBS} render job(s) on ${CPU_COUNT} CPU core(s)"
   while [ "$cursor" -lt "$total_images" ]; do
     remaining=$((total_images - cursor))
 
@@ -798,22 +937,52 @@ tile_effect_randomized() {
       FILTER="${FILTER}${stacked_rows}vstack=inputs=${layout_rows}[out]"
     fi
 
-    ffmpeg -nostdin -loglevel error \
-      "${INPUT_ARGS[@]}" \
-      -filter_complex "$FILTER" \
-      -map "[out]" \
-      -frames:v 1 \
-      -q:v 2 \
-      "$out_file"
-
     echo "$out_file" >> "$PLAYLIST_FILE"
+
+    if [ "$PARALLEL_JOBS" -gt 1 ]; then
+      render_randomized_slide "$out_file" "$FILTER" "${INPUT_ARGS[@]}" &
+      ACTIVE_PIDS+=("$!")
+      while [ "${#ACTIVE_PIDS[@]}" -ge "$PARALLEL_JOBS" ]; do
+        if wait "${ACTIVE_PIDS[0]}"; then
+          :
+        else
+          render_failures=$((render_failures + 1))
+        fi
+        ACTIVE_PIDS=("${ACTIVE_PIDS[@]:1}")
+        completed_jobs=$((completed_jobs + 1))
+      done
+    else
+      if render_randomized_slide "$out_file" "$FILTER" "${INPUT_ARGS[@]}"; then
+        :
+      else
+        render_failures=$((render_failures + 1))
+      fi
+      completed_jobs=$((completed_jobs + 1))
+    fi
 
     cursor=$((cursor + tile_count))
     slide=$((slide + 1))
-    printf "\rCompositing... slides: %d | images: %d/%d | layout: %s   " \
-      "$slide" "$cursor" "$total_images" "$picked_layout"
+    printf "\rCompositing... queued: %d | done: %d | images: %d/%d | layout: %s   " \
+      "$slide" "$completed_jobs" "$cursor" "$total_images" "$picked_layout"
+  done
+
+  for pid in "${ACTIVE_PIDS[@]}"; do
+    if wait "$pid"; then
+      :
+    else
+      render_failures=$((render_failures + 1))
+    fi
+    completed_jobs=$((completed_jobs + 1))
+    printf "\rCompositing... queued: %d | done: %d | images: %d/%d   " \
+      "$slide" "$completed_jobs" "$cursor" "$total_images"
   done
   printf "\n"
+
+  if [ "$render_failures" -gt 0 ]; then
+    echo "Compositing failed for ${render_failures} slide(s)."
+    rm -rf "$COMPOSITE_DIR"
+    return 1
+  fi
 
   if [ ! -s "$PLAYLIST_FILE" ]; then
     echo "Failed to create randomized tiled slides."
@@ -822,19 +991,15 @@ tile_effect_randomized() {
   fi
 
   echo "Created ${slide} randomized tile slides."
+  if [ "$cache_used" = "true" ]; then
+    echo "Saved cache: ${COMPOSITE_DIR}"
+  fi
   echo "Starting randomized tiled slideshow..."
-  mpv \
-    "--geometry=${SCREEN_RES}+0+0" \
-    "--image-display-duration=${DURATION}" \
-    "--hr-seek=yes" \
-    "--keep-open=no" \
-    "--no-audio" \
-    "--loop-playlist=inf" \
-    "--background=color" \
-    "--border=no" \
-    "--playlist=${PLAYLIST_FILE}"
+  play_composite_dir "$COMPOSITE_DIR"
 
-  rm -rf "$COMPOSITE_DIR"
+  if [ "$cache_used" != "true" ]; then
+    rm -rf "$COMPOSITE_DIR"
+  fi
 }
 
 crossfade_effect() {
