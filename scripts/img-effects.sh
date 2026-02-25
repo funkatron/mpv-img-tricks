@@ -45,6 +45,9 @@ JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
 SOUND_FILE=""  # Optional sound file during slideshow playback
 SOUND_TRIM_DB="-45"  # Leading silence trim threshold in dB
+MAX_FILES=""  # Optional cap on discovered images
+FILE_ORDER="natural"  # natural (sort -V) or om (oldest mtime first)
+FFMPEG_MEM_ARGS="-threads 1 -filter_threads 1 -filter_complex_threads 1"  # Keep ffmpeg memory usage predictable
 BACKGROUND_AUDIO_PID=""  # Background mpv PID for continuous tile audio
 PREPARED_SOUND_FILE=""  # Resolved/processed sound file path used at runtime
 TEMP_SOUND_FILE=""  # Temp trimmed sound file for cleanup
@@ -162,6 +165,24 @@ while [[ $# -gt 0 ]]; do
         shift 2
       fi
       ;;
+    --max-files|-N)
+      if [[ "$1" == *"="* ]]; then
+        MAX_FILES="${1#*=}"
+        shift
+      else
+        MAX_FILES="$2"
+        shift 2
+      fi
+      ;;
+    --order)
+      if [[ "$1" == *"="* ]]; then
+        FILE_ORDER="${1#*=}"
+        shift
+      else
+        FILE_ORDER="$2"
+        shift 2
+      fi
+      ;;
     --debug)
       DEBUG="true"
       shift
@@ -202,6 +223,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --jobs, -j N       Parallel render jobs for randomized tile (default: auto)"
       echo "  --sound, -S FILE   Play sound file during slideshow playback"
       echo "  --sound-trim-db N  Leading silence trim threshold in dB (default: -45)"
+      echo "  --max-files, -N N  Use only the first N discovered files"
+      echo "  --order MODE       File ordering: natural (default) or om (oldest mtime first)"
       echo "  --debug            Enable shell trace and raw tool output"
       echo "  --randomize, -z  Randomize grid layouts for each group"
       echo "  --recursive, -R  Recurse into subdirectories"
@@ -239,6 +262,22 @@ if ! [[ "$SOUND_TRIM_DB" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
   echo "Invalid --sound-trim-db value: $SOUND_TRIM_DB"
   exit 1
 fi
+if ! [[ "$LIMIT" =~ ^[0-9]+$ ]] || [ "$LIMIT" -lt 1 ]; then
+  echo "Invalid --limit value: $LIMIT (expected positive integer)"
+  exit 1
+fi
+if [ -n "$MAX_FILES" ] && ! [[ "$MAX_FILES" =~ ^[0-9]+$ ]]; then
+  echo "Invalid --max-files value: $MAX_FILES"
+  exit 1
+fi
+case "$FILE_ORDER" in
+  natural|om)
+    ;;
+  *)
+    echo "Invalid --order value: $FILE_ORDER (expected: natural or om)"
+    exit 1
+    ;;
+esac
 
 cleanup() {
   if [ -n "${BACKGROUND_AUDIO_PID:-}" ]; then
@@ -258,24 +297,54 @@ trap cleanup EXIT INT TERM
 WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
 HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
 
+sort_discovered_images() {
+  local input_file="$1"
+  local output_file="$2"
+
+  if [ "$FILE_ORDER" = "natural" ]; then
+    sort -V "$input_file" > "$output_file"
+    return 0
+  fi
+
+  # zsh-like *.png(om): oldest modification time first.
+  while IFS= read -r img; do
+    [ -n "$img" ] || continue
+    mtime=""
+    if mtime=$(stat -f '%m' "$img" 2>/dev/null); then
+      :
+    else
+      mtime=$(stat -c '%Y' "$img" 2>/dev/null || echo "0")
+    fi
+    printf "%s\t%s\n" "$mtime" "$img"
+  done < "$input_file" | sort -n -k1,1 | cut -f2- > "$output_file"
+}
+
 # Create temporary file list
 TMPLIST="$(mktemp)"
+TMPLIST_RAW="$(mktemp)"
 
 # Check if DIR contains glob patterns or is a directory
 if [[ "$DIR" == *"*"* ]]; then
   # Handle glob patterns - use find instead of ls
   if [ "$RECURSIVE" = "true" ]; then
-    find "$(dirname "$DIR")" -name "$(basename "$DIR")" -type f 2>/dev/null | sort -V > "$TMPLIST"
+    find "$(dirname "$DIR")" -name "$(basename "$DIR")" -type f 2>/dev/null > "$TMPLIST_RAW"
   else
-    find "$(dirname "$DIR")" -maxdepth 1 -name "$(basename "$DIR")" -type f 2>/dev/null | sort -V > "$TMPLIST"
+    find "$(dirname "$DIR")" -maxdepth 1 -name "$(basename "$DIR")" -type f 2>/dev/null > "$TMPLIST_RAW"
   fi
 else
   # Handle directory path - use find for better reliability
   if [ "$RECURSIVE" = "true" ]; then
-    find "$DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null | sort -V > "$TMPLIST"
+    find "$DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null > "$TMPLIST_RAW"
   else
-    find "$DIR" -maxdepth 1 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null | sort -V > "$TMPLIST"
+    find "$DIR" -maxdepth 1 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null > "$TMPLIST_RAW"
   fi
+fi
+sort_discovered_images "$TMPLIST_RAW" "$TMPLIST"
+rm -f "$TMPLIST_RAW"
+
+if [ -n "$MAX_FILES" ] && [ "$MAX_FILES" -gt 0 ]; then
+  sed -n "1,${MAX_FILES}p" "$TMPLIST" > "${TMPLIST}.limited"
+  mv "${TMPLIST}.limited" "$TMPLIST"
 fi
 
 if [ ! -s "$TMPLIST" ]; then
@@ -450,7 +519,9 @@ EOF
 
 ken_burns_effect() {
   local out="${OUTPUT:-ken-burns.mp4}"
+  local input_list
   echo "Creating Ken Burns effect video..."
+  input_list="$(get_limited_video_list "Ken Burns")"
 
   # Parse resolution
   WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
@@ -466,7 +537,7 @@ ken_burns_effect() {
     FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},zoompan=z='min(zoom+0.0015,1.3)':d=${DURATION}*${FPS}:x='iw/2-(iw/zoom/2)+${PAN_X}':y='ih/2-(ih/zoom/2)+${PAN_Y}':s=${WIDTH}x${HEIGHT}[v${i}];"
     INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
     i=$((i+1))
-  done < "$TMPLIST"
+  done < "$input_list"
 
   CONCAT_FILTER=""
   for ((j=0; j<i; j++)); do
@@ -474,16 +545,17 @@ ken_burns_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "Ken Burns video created: $out"
+  rm -f "$input_list"
 }
 
 glitch_effect() {
   local out="${OUTPUT:-glitch.mp4}"
+  local input_list
   echo "Creating glitch effect video..."
-
-  # Take only first LIMIT images for speed
-  head -"$LIMIT" "$TMPLIST" > "${TMPLIST}.head"
+  input_list="$(get_limited_video_list "Glitch")"
 
   FILTER=""
   INPUTS=""
@@ -498,7 +570,7 @@ glitch_effect() {
     esac
     INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
     i=$((i+1))
-  done < "${TMPLIST}.head"
+  done < "$input_list"
 
   CONCAT_FILTER=""
   for ((j=0; j<i; j++)); do
@@ -506,17 +578,17 @@ glitch_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "Glitch video created: $out"
-  rm -f "${TMPLIST}.head"
+  rm -f "$input_list"
 }
 
 acid_effect() {
   local out="${OUTPUT:-acid-trip.mp4}"
+  local input_list
   echo "Creating acid trip video..."
-
-  # Take only first LIMIT images for speed
-  head -"$LIMIT" "$TMPLIST" > "${TMPLIST}.head"
+  input_list="$(get_limited_video_list "Acid")"
 
   FILTER=""
   INPUTS=""
@@ -531,7 +603,7 @@ acid_effect() {
     esac
     INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
     i=$((i+1))
-  done < "${TMPLIST}.head"
+  done < "$input_list"
 
   CONCAT_FILTER=""
   for ((j=0; j<i; j++)); do
@@ -539,14 +611,17 @@ acid_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "Acid trip video created: $out"
-  rm -f "${TMPLIST}.head"
+  rm -f "$input_list"
 }
 
 reality_effect() {
   local out="${OUTPUT:-reality-break.mp4}"
+  local input_list
   echo "Breaking reality..."
+  input_list="$(get_limited_video_list "Reality")"
 
   FILTER=""
   INPUTS=""
@@ -562,7 +637,7 @@ reality_effect() {
     esac
     INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
     i=$((i+1))
-  done < "$TMPLIST"
+  done < "$input_list"
 
   CONCAT_FILTER=""
   for ((j=0; j<i; j++)); do
@@ -570,16 +645,17 @@ reality_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 25M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 25M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "Reality broken: $out"
+  rm -f "$input_list"
 }
 
 kaleido_effect() {
   local out="${OUTPUT:-kaleido.mp4}"
+  local input_list
   echo "Creating INTENSE kaleidoscope patterns..."
-
-  # Take only first LIMIT images for speed
-  head -"$LIMIT" "$TMPLIST" > "${TMPLIST}.head"
+  input_list="$(get_limited_video_list "Kaleido")"
 
   FILTER=""
   INPUTS=""
@@ -590,7 +666,7 @@ kaleido_effect() {
     FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},setsar=1,hue=h=t*180:s=8:b=3.0,eq=contrast=2.0:brightness=0.3:saturation=3.0[v${i}];"
     INPUTS="${INPUTS}-loop 1 -t 0.5 -stream_loop 1 -i \"${img}\" "
     i=$((i+1))
-  done < "${TMPLIST}.head"
+  done < "$input_list"
 
   CONCAT_FILTER=""
   for ((j=0; j<i; j++)); do
@@ -598,14 +674,17 @@ kaleido_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 18M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 18M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "INTENSE Kaleidoscope video created: $out"
-  rm -f "${TMPLIST}.head"
+  rm -f "$input_list"
 }
 
 matrix_effect() {
   local out="${OUTPUT:-matrix.mp4}"
+  local input_list
   echo "Entering the Matrix..."
+  input_list="$(get_limited_video_list "Matrix")"
 
   FILTER=""
   INPUTS=""
@@ -615,7 +694,7 @@ matrix_effect() {
     FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[m1][m2];[m1]hue=h=120:s=1:b=0.3[m1];[m2]hue=h=0:s=0:b=1[m2];[m1][m2]blend=all_mode=screen[v${i}];"
     INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
     i=$((i+1))
-  done < "$TMPLIST"
+  done < "$input_list"
 
   CONCAT_FILTER=""
   for ((j=0; j<i; j++)); do
@@ -623,13 +702,17 @@ matrix_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 16M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 16M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "Matrix video created: $out"
+  rm -f "$input_list"
 }
 
 liquid_effect() {
   local out="${OUTPUT:-liquid.mp4}"
+  local input_list
   echo "Creating liquid distortion..."
+  input_list="$(get_limited_video_list "Liquid")"
 
   FILTER=""
   INPUTS=""
@@ -639,7 +722,7 @@ liquid_effect() {
     FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[l1][l2][l3];[l1]hue=h=45:s=1.5[l1];[l2]hue=h=135:s=1.5[l2];[l3]hue=h=225:s=1.5[l3];[l1][l2]blend=all_mode=addition[l12];[l12][l3]blend=all_mode=addition[v${i}];"
     INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
     i=$((i+1))
-  done < "$TMPLIST"
+  done < "$input_list"
 
   CONCAT_FILTER=""
   for ((j=0; j<i; j++)); do
@@ -647,8 +730,10 @@ liquid_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 17M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 17M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "Liquid video created: $out"
+  rm -f "$input_list"
 }
 
 tile_effect() {
@@ -698,6 +783,39 @@ build_audio_args() {
   else
     AUDIO_ARGS+=("--no-audio")
   fi
+}
+
+build_video_audio_args() {
+  local audio_input_index="$1"
+  VIDEO_AUDIO_INPUTS=""
+  VIDEO_AUDIO_OUTPUT_OPTS="-an"
+  if [ -n "$SOUND_FILE" ]; then
+    prepare_sound_file
+    local audio_path="$PREPARED_SOUND_FILE"
+    if [ -z "$audio_path" ] || [ ! -f "$audio_path" ]; then
+      echo "Sound file not playable: $SOUND_FILE"
+      return 1
+    fi
+    VIDEO_AUDIO_INPUTS="-stream_loop -1 -i \"$audio_path\""
+    VIDEO_AUDIO_OUTPUT_OPTS="-map ${audio_input_index}:a -c:a aac -b:a 192k -shortest"
+  fi
+}
+
+get_limited_video_list() {
+  local effect_name="$1"
+  local list_file="${TMPLIST}.video-limit"
+  local total_count
+  local limited_count
+
+  total_count=$(wc -l < "$TMPLIST")
+  sed -n "1,${LIMIT}p" "$TMPLIST" > "$list_file"
+  limited_count=$(wc -l < "$list_file")
+
+  if [ "$limited_count" -lt "$total_count" ]; then
+    echo "Using first ${limited_count}/${total_count} images for ${effect_name} (--limit memory guard)." >&2
+  fi
+
+  echo "$list_file"
 }
 
 prepare_sound_file() {
@@ -1410,7 +1528,9 @@ tile_effect_randomized() {
 
 crossfade_effect() {
   local out="${OUTPUT:-crossfade.mp4}"
+  local input_list
   echo "Creating crossfade transitions..."
+  input_list="$(get_limited_video_list "Crossfade")"
 
   FILTER=""
   INPUTS=""
@@ -1420,7 +1540,7 @@ crossfade_effect() {
     FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION}[v${i}];"
     INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
     i=$((i+1))
-  done < "$TMPLIST"
+  done < "$input_list"
 
   # Create crossfade transitions between images
   TRANSITION_FILTER=""
@@ -1434,8 +1554,10 @@ crossfade_effect() {
   done
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
-  eval "ffmpeg ${INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 12M -pix_fmt yuv420p -an -r ${FPS} -y \"${out}\""
+  build_video_audio_args "$i" || return 1
+  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 12M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
   echo "Crossfade video created: $out"
+  rm -f "$input_list"
 }
 
 # Main effect dispatcher
