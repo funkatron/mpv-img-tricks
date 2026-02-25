@@ -709,10 +709,11 @@ prepare_sound_file() {
     return 0
   fi
 
-  TEMP_SOUND_FILE="$(mktemp "/tmp/mpv-img-tricks-sound-XXXXXX.mp3")"
+  TEMP_SOUND_FILE="$(mktemp "${TMPDIR:-/tmp}/mpv-img-tricks-sound.XXXXXX")"
   if ffmpeg -nostdin -loglevel error -y \
     -i "$SOUND_FILE" \
     -af "silenceremove=start_periods=1:start_silence=0:start_threshold=${SOUND_TRIM_DB}dB" \
+    -f mp3 \
     "$TEMP_SOUND_FILE"; then
     if [ -s "$TEMP_SOUND_FILE" ]; then
       PREPARED_SOUND_FILE="$TEMP_SOUND_FILE"
