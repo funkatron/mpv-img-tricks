@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # mpv-img-tricks: Unified script with modular effects
-# Usage: scripts/img-effects.sh <effect> <images_dir> [options]
+# Usage: img-effects <effect> <images_dir> [options]
+#    or: scripts/img-effects.sh <effect> <images_dir> [options]
 #
 # Effects:
 #   basic     - Simple slideshow (like original blast.sh)
@@ -18,11 +19,11 @@ set -euo pipefail
 #   tile      - Tile small groups of images in a grid
 #
 # Examples:
-#   scripts/img-effects.sh basic ~/pics
-#   scripts/img-effects.sh chaos ~/pics --duration 0.02
-#   scripts/img-effects.sh ken-burns ~/pics --duration 3 --output slideshow.mp4
-#   scripts/img-effects.sh acid ~/pics --resolution 1920x1080
-#   scripts/img-effects.sh tile ~/pics --grid 2x2 --spacing 10
+#   img-effects basic ~/pics
+#   img-effects chaos ~/pics --duration 0.02
+#   img-effects ken-burns ~/pics --duration 3 --output slideshow.mp4
+#   img-effects acid ~/pics --resolution 1920x1080
+#   img-effects tile ~/pics --grid 2x2 --spacing 12
 
 # Default values
 EFFECT="${1:-basic}"
@@ -31,16 +32,16 @@ OUTPUT=""
 RESOLUTION="1920x1080"
 FPS="30"
 LIMIT="5"  # Default limit for video effects
+SCALE_MODE="fit"  # fit|fill scaling behavior for mpv/tile paths
 GRID="2x2"  # Default grid size for tile effect
-SPACING="10"  # Default spacing between tiles
-FRAMES_PER_GRID="1"  # How many frames to show each grid before advancing
+SPACING="0"  # Pixel gap between tiles in tile effect
 GROUP_SIZE="4"  # Number of images per group for randomization
 RANDOMIZE="false"  # Whether to randomize grid layouts
 RECURSIVE="false"  # Whether to recurse into subdirectories
 USE_PLAYLIST="false"  # Whether to use playlist file for large image sets
 RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scaling
 CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
-CACHE_VERSION="v2"  # Bump when randomized composite behavior changes
+CACHE_VERSION="v3"  # Bump when randomized composite behavior changes
 JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
 SOUND_FILE=""  # Optional sound file during slideshow playback
@@ -52,6 +53,18 @@ BACKGROUND_AUDIO_PID=""  # Background mpv PID for continuous tile audio
 PREPARED_SOUND_FILE=""  # Resolved/processed sound file path used at runtime
 TEMP_SOUND_FILE=""  # Temp trimmed sound file for cleanup
 TMPLIST=""  # Temp list file used during image discovery
+TILE_SKIP_LOG=""  # Log of unreadable tile inputs that were skipped
+MPV_INSTANCES="1"  # Number of mpv instances for live slideshow effects
+DISPLAY_INDEX=""  # Preferred display index for single instance or master
+DISPLAY_MAP=""  # Per-instance display mapping CSV
+MASTER_CONTROL_MODE="auto"  # yes|no|auto for multi-instance sync
+RANDOM_SCALE_LUA_SCRIPT=""  # Temp lua script for random fit/crop mode
+TILE_VIDEO_SEEK="0.25"  # Seek offset (seconds) when sampling video frames for tile composites
+ANIMATE_VIDEOS="false"  # Render animated tile composites instead of still snapshots
+TILE_VIDEO_ENCODER_OVERRIDE="auto"  # auto|hevc_videotoolbox|libx265|libx264
+TILE_VIDEO_ENCODER_READY="false"  # Whether animated tile encoder preference was initialized
+TILE_VIDEO_ENCODER_NAME=""  # Selected encoder name for animated tile composites
+TILE_VIDEO_CODEC_ARGS=()  # ffmpeg codec args for animated tile composites
 
 # Parse command line arguments
 shift  # Remove effect from arguments
@@ -93,6 +106,23 @@ while [[ $# -gt 0 ]]; do
         shift 2
       fi
       ;;
+    --scale-mode)
+      if [[ "$1" == *"="* ]]; then
+        SCALE_MODE="${1#*=}"
+        shift
+      else
+        SCALE_MODE="$2"
+        shift 2
+      fi
+      ;;
+    --fit)
+      SCALE_MODE="fit"
+      shift
+      ;;
+    --fill)
+      SCALE_MODE="fill"
+      shift
+      ;;
     --limit|-l)
       if [[ "$1" == *"="* ]]; then
         LIMIT="${1#*=}"
@@ -117,15 +147,6 @@ while [[ $# -gt 0 ]]; do
         shift
       else
         SPACING="$2"
-        shift 2
-      fi
-      ;;
-    --frames-per-grid|-fpg)
-      if [[ "$1" == *"="* ]]; then
-        FRAMES_PER_GRID="${1#*=}"
-        shift
-      else
-        FRAMES_PER_GRID="$2"
         shift 2
       fi
       ;;
@@ -187,8 +208,60 @@ while [[ $# -gt 0 ]]; do
       DEBUG="true"
       shift
       ;;
+    --instances|-n)
+      if [[ "$1" == *"="* ]]; then
+        MPV_INSTANCES="${1#*=}"
+        shift
+      else
+        MPV_INSTANCES="$2"
+        shift 2
+      fi
+      ;;
+    --display)
+      if [[ "$1" == *"="* ]]; then
+        DISPLAY_INDEX="${1#*=}"
+        shift
+      else
+        DISPLAY_INDEX="$2"
+        shift 2
+      fi
+      ;;
+    --display-map)
+      if [[ "$1" == *"="* ]]; then
+        DISPLAY_MAP="${1#*=}"
+        shift
+      else
+        DISPLAY_MAP="$2"
+        shift 2
+      fi
+      ;;
+    --master-control)
+      MASTER_CONTROL_MODE="yes"
+      shift
+      ;;
+    --no-master-control)
+      MASTER_CONTROL_MODE="no"
+      shift
+      ;;
     --randomize|-z)
       RANDOMIZE="true"
+      shift
+      ;;
+    --animate-videos|--animate-video)
+      ANIMATE_VIDEOS="true"
+      shift
+      ;;
+    --encoder)
+      if [[ "$1" == *"="* ]]; then
+        TILE_VIDEO_ENCODER_OVERRIDE="${1#*=}"
+        shift
+      else
+        TILE_VIDEO_ENCODER_OVERRIDE="$2"
+        shift 2
+      fi
+      ;;
+    --no-animate-videos|--no-animate-video)
+      ANIMATE_VIDEOS="false"
       shift
       ;;
     --no-cache)
@@ -215,10 +288,12 @@ while [[ $# -gt 0 ]]; do
       echo "  --output, -o      Output file for video effects"
       echo "  --resolution, -r  Output resolution (default: 1920x1080)"
       echo "  --fps, -f        Frames per second (default: 30)"
+      echo "  --scale-mode MODE  Image scaling mode: fit or fill (default: fit)"
+      echo "  --fit              Alias for --scale-mode fit"
+      echo "  --fill             Alias for --scale-mode fill"
       echo "  --limit, -l      Max images for video effects (default: 5)"
       echo "  --grid, -g       Grid size for tile effect (default: 2x2)"
-      echo "  --spacing, -s    Spacing between tiles in pixels (default: 10)"
-      echo "  --frames-per-grid, -fpg  Frames per grid before advancing (default: 1)"
+      echo "  --spacing, -s N  Tile spacing in pixels (default: 0)"
       echo "  --group-size, -gs  Number of images per group for randomization (default: 4)"
       echo "  --jobs, -j N       Parallel render jobs for randomized tile (default: auto)"
       echo "  --sound, -S FILE   Play sound file during slideshow playback"
@@ -226,9 +301,16 @@ while [[ $# -gt 0 ]]; do
       echo "  --max-files, -N N  Use only the first N discovered files"
       echo "  --order MODE       File ordering: natural (default) or om (oldest mtime first)"
       echo "  --debug            Enable shell trace and raw tool output"
+      echo "  --instances, -n N  Launch N mpv instances for live slideshow effects"
+      echo "  --display INDEX    Target display index for single instance/master"
+      echo "  --display-map CSV  Per-instance display mapping (e.g. 0,1,2)"
+      echo "  --master-control   Enable master->follower sync for multi-instance"
+      echo "  --no-master-control Disable master->follower sync for multi-instance"
       echo "  --randomize, -z  Randomize grid layouts for each group"
       echo "  --recursive, -R  Recurse into subdirectories"
       echo "  --no-cache       Rebuild randomized tile composites (default: cache enabled)"
+      echo "  --animate-videos Render animated tile clips (mp4) instead of still composites"
+      echo "  --encoder NAME   Animated tile encoder: auto|hevc_videotoolbox|libx265|libx264"
       echo "  --playlist, -p   Use playlist file for large image sets (ensures all images are loaded)"
       echo "  --random-scale, -rs  Randomly alternate between fill and fit scaling modes"
       exit 0
@@ -266,6 +348,47 @@ if ! [[ "$LIMIT" =~ ^[0-9]+$ ]] || [ "$LIMIT" -lt 1 ]; then
   echo "Invalid --limit value: $LIMIT (expected positive integer)"
   exit 1
 fi
+case "$SCALE_MODE" in
+  fit|fill)
+    ;;
+  *)
+    echo "Invalid --scale-mode value: $SCALE_MODE (expected: fit or fill)"
+    exit 1
+    ;;
+esac
+if ! [[ "$SPACING" =~ ^[0-9]+$ ]]; then
+  echo "Invalid --spacing value: $SPACING (expected non-negative integer)"
+  exit 1
+fi
+if ! [[ "$MPV_INSTANCES" =~ ^[0-9]+$ ]] || [ "$MPV_INSTANCES" -lt 1 ]; then
+  echo "Invalid --instances value: $MPV_INSTANCES (expected positive integer)"
+  exit 1
+fi
+case "$ANIMATE_VIDEOS" in
+  true|false)
+    ;;
+  *)
+    echo "Invalid animate-videos flag value: $ANIMATE_VIDEOS"
+    exit 1
+    ;;
+esac
+case "$TILE_VIDEO_ENCODER_OVERRIDE" in
+  auto|hevc_videotoolbox|libx265|libx264)
+    ;;
+  *)
+    echo "Invalid --encoder value: $TILE_VIDEO_ENCODER_OVERRIDE"
+    echo "Expected: auto, hevc_videotoolbox, libx265, or libx264"
+    exit 1
+    ;;
+esac
+case "$MASTER_CONTROL_MODE" in
+  yes|no|auto)
+    ;;
+  *)
+    echo "Invalid master control mode: $MASTER_CONTROL_MODE (expected yes|no|auto)"
+    exit 1
+    ;;
+esac
 if [ -n "$MAX_FILES" ] && ! [[ "$MAX_FILES" =~ ^[0-9]+$ ]]; then
   echo "Invalid --max-files value: $MAX_FILES"
   exit 1
@@ -287,8 +410,14 @@ cleanup() {
   if [ -n "${TEMP_SOUND_FILE:-}" ] && [ -f "${TEMP_SOUND_FILE}" ]; then
     rm -f "${TEMP_SOUND_FILE}"
   fi
+  if [ -n "${RANDOM_SCALE_LUA_SCRIPT:-}" ] && [ -f "${RANDOM_SCALE_LUA_SCRIPT}" ]; then
+    rm -f "${RANDOM_SCALE_LUA_SCRIPT}"
+  fi
   if [ -n "${TMPLIST:-}" ] && [ -f "${TMPLIST}" ]; then
     rm -f "${TMPLIST}"
+  fi
+  if [ -n "${TILE_SKIP_LOG:-}" ] && [ -f "${TILE_SKIP_LOG}" ]; then
+    rm -f "${TILE_SKIP_LOG}"
   fi
 }
 trap cleanup EXIT INT TERM
@@ -356,165 +485,128 @@ fi
 TOTAL=$(wc -l < "$TMPLIST")
 echo "Processing $TOTAL images with '$EFFECT' effect..."
 
-# Function to get random scaling mode
-get_random_scale() {
-  if [ "$RANDOM_SCALE" = "true" ]; then
-    # Randomly choose between fill (crop to fill screen) and fit (fit within screen)
-    if [ $((RANDOM % 2)) -eq 0 ]; then
-      echo "crop"  # Fill screen (crop excess)
+get_mpv_pipeline_path() {
+  local source="${BASH_SOURCE[0]}"
+  while [[ -L "$source" ]]; do
+    local dir
+    dir="$(cd "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" != /* ]] && source="${dir}/${source}"
+  done
+  local repo_root
+  repo_root="$(cd "$(dirname "$source")/.." >/dev/null 2>&1 && pwd)"
+  echo "${repo_root}/scripts/mpv-pipeline.sh"
+}
+
+create_random_scale_script() {
+  RANDOM_SCALE_LUA_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/mpv-img-tricks-random-scale.XXXXXX.lua")"
+  cat > "$RANDOM_SCALE_LUA_SCRIPT" << 'EOF'
+function on_file_loaded()
+    if math.random() < 0.5 then
+        mp.set_property("video-scale", "crop")
     else
-      echo "fit"   # Fit within screen (letterbox/pillarbox)
-    fi
+        mp.set_property("video-scale", "fit")
+    end
+end
+EOF
+}
+
+run_live_pipeline_effect() {
+  local mode="$1"
+  local mpv_pipeline
+  local loop_mode
+  local fullscreen_mode
+
+  mpv_pipeline="$(get_mpv_pipeline_path)"
+  if [ ! -x "$mpv_pipeline" ]; then
+    echo "Canonical runner not executable: $mpv_pipeline"
+    exit 1
+  fi
+
+  case "$mode" in
+    basic)
+      loop_mode="none"
+      fullscreen_mode="no"
+      ;;
+    chaos)
+      loop_mode="playlist"
+      fullscreen_mode="yes"
+      ;;
+    *)
+      echo "Unknown live mode for pipeline: $mode"
+      exit 1
+      ;;
+  esac
+
+  build_audio_args
+  local -a pipeline_args=(
+    --playlist "$TMPLIST"
+    --duration "$DURATION"
+    --fullscreen "$fullscreen_mode"
+    --loop-mode "$loop_mode"
+    --scale-mode "$SCALE_MODE"
+    --instances "$MPV_INSTANCES"
+    --master-control "$MASTER_CONTROL_MODE"
+    --debug "$DEBUG"
+    --mpv-arg "--hr-seek=yes"
+    --mpv-arg "--keep-open=no"
+  )
+
+  if [ "$mode" = "chaos" ]; then
+    pipeline_args+=(--shuffle yes)
   else
-    echo "fit"     # Default behavior
+    pipeline_args+=(--shuffle no)
+    pipeline_args+=(--mpv-arg "--playlist-start=0")
+  fi
+
+  if [ -n "$DISPLAY_INDEX" ]; then
+    pipeline_args+=(--display "$DISPLAY_INDEX")
+  fi
+  if [ -n "$DISPLAY_MAP" ]; then
+    pipeline_args+=(--display-map "$DISPLAY_MAP")
+  fi
+
+  if [ "$RANDOM_SCALE" = "true" ]; then
+    create_random_scale_script
+    pipeline_args+=(--extra-script "$RANDOM_SCALE_LUA_SCRIPT")
+  fi
+
+  if [ -n "$SOUND_FILE" ]; then
+    pipeline_args+=(--no-audio no)
+    pipeline_args+=(--mpv-arg "--audio-file=$SOUND_FILE")
+    pipeline_args+=(--mpv-arg "--audio-display=no")
+  else
+    pipeline_args+=(--no-audio yes)
+  fi
+
+  exec "$mpv_pipeline" "${pipeline_args[@]}"
+}
+
+build_tile_cell_filter() {
+  local cell_w="$1"
+  local cell_h="$2"
+  if [ "$SCALE_MODE" = "fill" ]; then
+    echo "scale=${cell_w}:${cell_h}:force_original_aspect_ratio=increase,crop=${cell_w}:${cell_h}"
+  else
+    echo "scale=${cell_w}:${cell_h}:force_original_aspect_ratio=decrease,pad=${cell_w}:${cell_h}:(ow-iw)/2:(oh-ih)/2:black"
   fi
 }
 
 # Effect modules
 basic_effect() {
   echo "Running basic slideshow..."
-  build_audio_args
-
-  if [ "$USE_PLAYLIST" = "true" ]; then
-    # Use playlist file for large image sets
-    PLAYLIST_FILE="$(mktemp)"
-    echo "Creating playlist with $TOTAL images..."
-
-    # Create playlist file with all images
-    while IFS= read -r img; do
-      echo "$img" >> "$PLAYLIST_FILE"
-    done < "$TMPLIST"
-
-    echo "Starting basic slideshow with playlist..."
-    if [ "$RANDOM_SCALE" = "true" ]; then
-      echo "Using random fill/fit scaling..."
-      # Create a Lua script for random scaling
-      LUA_SCRIPT="$(mktemp).lua"
-      cat > "$LUA_SCRIPT" << 'EOF'
-function on_file_loaded()
-    -- Randomly choose between fill (crop) and fit scaling
-    if math.random() < 0.5 then
-        mp.set_property("video-scale", "crop")  -- Fill screen
-    else
-        mp.set_property("video-scale", "fit")    -- Fit within screen
-    end
-end
-EOF
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --hr-seek=yes \
-        --keep-open=no \
-        "${AUDIO_ARGS[@]}" \
-        --playlist-start=0 \
-        --loop-file=no \
-        --script="$LUA_SCRIPT" \
-        --playlist="$PLAYLIST_FILE" 2>/dev/null
-    else
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --hr-seek=yes \
-        --keep-open=no \
-        "${AUDIO_ARGS[@]}" \
-        --playlist-start=0 \
-        --loop-file=no \
-        --playlist="$PLAYLIST_FILE" 2>/dev/null
-    fi
-  else
-    # Original behavior for smaller sets
-    if [[ "$DIR" == *"*"* ]]; then
-      # Handle glob patterns - pass files directly to mpv
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --hr-seek=yes \
-        --keep-open=no \
-        "${AUDIO_ARGS[@]}" \
-        --playlist-start=0 \
-        --loop-file=no \
-        $DIR 2>/dev/null
-    else
-      # Handle directory path
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --hr-seek=yes \
-        --keep-open=no \
-        "${AUDIO_ARGS[@]}" \
-        --playlist-start=0 \
-        --loop-file=no \
-        "$DIR"/*.{jpg,JPG,jpeg,JPEG,png,PNG,webp,WEBP} 2>/dev/null
-    fi
+  if [ "$USE_PLAYLIST" = "false" ] && [ "$DEBUG" = "true" ]; then
+    echo "Debug: canonical runner always consumes discovered playlist (legacy --playlist no longer changes basic/chaos behavior)."
   fi
+  run_live_pipeline_effect "basic"
 }
 
 chaos_effect() {
   echo "Running chaos slideshow..."
-  build_audio_args
-
-  if [ "$USE_PLAYLIST" = "true" ]; then
-    # Use playlist file for large image sets
-    PLAYLIST_FILE="$(mktemp)"
-    echo "Creating playlist with $TOTAL images..."
-
-    # Create playlist file with all images
-    while IFS= read -r img; do
-      echo "$img" >> "$PLAYLIST_FILE"
-    done < "$TMPLIST"
-
-    echo "Starting chaos slideshow with playlist..."
-    if [ "$RANDOM_SCALE" = "true" ]; then
-      echo "Using random fill/fit scaling..."
-      # Create a Lua script for random scaling
-      LUA_SCRIPT="$(mktemp).lua"
-      cat > "$LUA_SCRIPT" << 'EOF'
-function on_file_loaded()
-    -- Randomly choose between fill (crop) and fit scaling
-    if math.random() < 0.5 then
-        mp.set_property("video-scale", "crop")  -- Fill screen
-    else
-        mp.set_property("video-scale", "fit")    -- Fit within screen
-    end
-end
-EOF
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --shuffle \
-        --loop-playlist=inf \
-        --hr-seek=yes \
-        "${AUDIO_ARGS[@]}" \
-        --fs \
-        --script="$LUA_SCRIPT" \
-        --playlist="$PLAYLIST_FILE" 2>/dev/null
-    else
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --shuffle \
-        --loop-playlist=inf \
-        --hr-seek=yes \
-        "${AUDIO_ARGS[@]}" \
-        --fs \
-        --playlist="$PLAYLIST_FILE" 2>/dev/null
-    fi
-  else
-    # Original behavior for smaller sets
-    if [[ "$DIR" == *"*"* ]]; then
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --shuffle \
-        --loop-playlist=inf \
-        --hr-seek=yes \
-        "${AUDIO_ARGS[@]}" \
-        --fs \
-        $DIR 2>/dev/null
-    else
-      exec mpv \
-        --image-display-duration="$DURATION" \
-        --shuffle \
-        --loop-playlist=inf \
-        --hr-seek=yes \
-        "${AUDIO_ARGS[@]}" \
-        --fs \
-        "$DIR"/*.{jpg,JPG,jpeg,JPEG,png,PNG,webp,WEBP} 2>/dev/null
-    fi
+  if [ "$USE_PLAYLIST" = "false" ] && [ "$DEBUG" = "true" ]; then
+    echo "Debug: canonical runner always consumes discovered playlist (legacy --playlist no longer changes basic/chaos behavior)."
   fi
+  run_live_pipeline_effect "chaos"
 }
 
 ken_burns_effect() {
@@ -738,6 +830,9 @@ liquid_effect() {
 
 tile_effect() {
   echo "Creating live tiled slideshow with mpv..."
+  if [ "$ANIMATE_VIDEOS" = "true" ]; then
+    configure_tile_video_encoder
+  fi
   if [ -n "$SOUND_FILE" ]; then
     start_background_audio_loop
     AUDIO_ARGS=("--no-audio")
@@ -747,6 +842,7 @@ tile_effect() {
 
   # Detect screen resolution (Linux: xrandr, macOS: system_profiler).
   detect_screen_resolution
+  filter_tile_readable_inputs "$TMPLIST" || return 1
 
   echo "Screen: ${SCREEN_RES}, Duration: ${DURATION}s, Group size: ${GROUP_SIZE}"
 
@@ -894,23 +990,28 @@ sum_active_rss_kb() {
 
 detect_screen_resolution() {
   local detected=""
+  local os_name
+  os_name="$(uname -s)"
 
-  if command -v xrandr >/dev/null 2>&1; then
-    detected=$(xrandr --current 2>/dev/null | awk '/\*/{print $1; exit}')
-  fi
-
-  if [ -z "$detected" ] && command -v system_profiler >/dev/null 2>&1; then
-    detected=$(
-      system_profiler SPDisplaysDataType 2>/dev/null \
-        | sed -nE 's/.*UI Looks like:[[:space:]]*([0-9]+)[[:space:]]*x[[:space:]]*([0-9]+).*/\1x\2/p' \
-        | head -1
-    )
-    if [ -z "$detected" ]; then
+  if [ "$os_name" = "Darwin" ]; then
+    if command -v system_profiler >/dev/null 2>&1; then
+      # Prefer physical panel resolution for collage sizing on macOS.
       detected=$(
         system_profiler SPDisplaysDataType 2>/dev/null \
           | sed -nE 's/.*Resolution:[[:space:]]*([0-9]+)[[:space:]]*x[[:space:]]*([0-9]+).*/\1x\2/p' \
           | head -1
       )
+      if [ -z "$detected" ]; then
+        detected=$(
+          system_profiler SPDisplaysDataType 2>/dev/null \
+            | sed -nE 's/.*UI Looks like:[[:space:]]*([0-9]+)[[:space:]]*x[[:space:]]*([0-9]+).*/\1x\2/p' \
+            | head -1
+        )
+      fi
+    fi
+  else
+    if command -v xrandr >/dev/null 2>&1; then
+      detected=$(xrandr --current 2>/dev/null | awk '/\*/{print $1; exit}')
     fi
   fi
 
@@ -923,6 +1024,127 @@ detect_screen_resolution() {
   SCREEN_HEIGHT=$(echo "$SCREEN_RES" | cut -d'x' -f2)
 }
 
+filter_tile_readable_inputs() {
+  local input_list="$1"
+  local checked=0
+  local kept=0
+  local skipped=0
+  local filtered_list
+
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "ffprobe not found; skipping tile media validation."
+    return 0
+  fi
+
+  filtered_list="$(mktemp)"
+  TILE_SKIP_LOG="$(mktemp)"
+
+  while IFS= read -r media; do
+    [ -n "$media" ] || continue
+    checked=$((checked + 1))
+    if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$media" >/dev/null 2>&1; then
+      echo "$media" >> "$filtered_list"
+      kept=$((kept + 1))
+    else
+      echo "$media" >> "$TILE_SKIP_LOG"
+      skipped=$((skipped + 1))
+    fi
+  done < "$input_list"
+
+  mv "$filtered_list" "$input_list"
+
+  if [ "$kept" -eq 0 ]; then
+    echo "No readable media remained for tile effect."
+    if [ "$skipped" -gt 0 ]; then
+      echo "Skipped list saved to: $TILE_SKIP_LOG"
+    fi
+    return 1
+  fi
+
+  if [ "$skipped" -gt 0 ]; then
+    echo "Skipped ${skipped}/${checked} unreadable media file(s)."
+    echo "Skip log: $TILE_SKIP_LOG"
+  else
+    rm -f "$TILE_SKIP_LOG"
+    TILE_SKIP_LOG=""
+  fi
+}
+
+is_probably_video_file() {
+  local lower_path
+  lower_path=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case "$lower_path" in
+    *.mov|*.mp4|*.m4v|*.mkv|*.webm|*.avi|*.mpg|*.mpeg)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_probably_image_file() {
+  local lower_path
+  lower_path=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case "$lower_path" in
+    *.jpg|*.jpeg|*.png|*.webp|*.bmp|*.gif|*.tiff|*.heic)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+configure_tile_video_encoder() {
+  local encoder_list
+  if [ "$TILE_VIDEO_ENCODER_READY" = "true" ]; then
+    return 0
+  fi
+
+  TILE_VIDEO_CODEC_ARGS=()
+  TILE_VIDEO_ENCODER_NAME=""
+
+  encoder_list="$(ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+
+  if [ "$TILE_VIDEO_ENCODER_OVERRIDE" != "auto" ]; then
+    if printf '%s' "$encoder_list" | grep -q "$TILE_VIDEO_ENCODER_OVERRIDE"; then
+      case "$TILE_VIDEO_ENCODER_OVERRIDE" in
+        hevc_videotoolbox)
+          TILE_VIDEO_ENCODER_NAME="hevc_videotoolbox"
+          TILE_VIDEO_CODEC_ARGS=(-c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p)
+          ;;
+        libx265)
+          TILE_VIDEO_ENCODER_NAME="libx265"
+          TILE_VIDEO_CODEC_ARGS=(-c:v libx265 -preset medium -crf 25 -pix_fmt yuv420p)
+          ;;
+        libx264)
+          TILE_VIDEO_ENCODER_NAME="libx264"
+          TILE_VIDEO_CODEC_ARGS=(-c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p)
+          ;;
+      esac
+      TILE_VIDEO_ENCODER_READY="true"
+      echo "Animated tile encoder: ${TILE_VIDEO_ENCODER_NAME} (forced)"
+      return 0
+    fi
+    echo "Requested encoder '$TILE_VIDEO_ENCODER_OVERRIDE' is unavailable; falling back to auto."
+  fi
+
+  if printf '%s' "$encoder_list" | grep -q 'hevc_videotoolbox'; then
+    TILE_VIDEO_ENCODER_NAME="hevc_videotoolbox"
+    TILE_VIDEO_CODEC_ARGS=(-c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p)
+  elif printf '%s' "$encoder_list" | grep -q 'libx265'; then
+    TILE_VIDEO_ENCODER_NAME="libx265"
+    TILE_VIDEO_CODEC_ARGS=(-c:v libx265 -preset medium -crf 25 -pix_fmt yuv420p)
+  else
+    TILE_VIDEO_ENCODER_NAME="libx264"
+    TILE_VIDEO_CODEC_ARGS=(-c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p)
+  fi
+
+  TILE_VIDEO_ENCODER_READY="true"
+  echo "Animated tile encoder: ${TILE_VIDEO_ENCODER_NAME}"
+}
+
 tile_effect_fixed() {
   # Parse grid dimensions
   GRID_COLS=$(echo "$GRID" | cut -d'x' -f1)
@@ -933,40 +1155,46 @@ tile_effect_fixed() {
   echo "Fixed tile mode"
   echo "Grid: ${GRID_COLS}x${GRID_ROWS}, tiles per frame: ${TILE_COUNT}, input images: ${INPUT_COUNT}"
 
-  # Calculate optimal tile size for screen
-  TILE_WIDTH=$((SCREEN_WIDTH / GRID_COLS))
-  TILE_HEIGHT=$((SCREEN_HEIGHT / GRID_ROWS))
+  # Calculate tile size accounting for requested spacing between cells.
+  USABLE_WIDTH=$((SCREEN_WIDTH - SPACING * (GRID_COLS - 1)))
+  USABLE_HEIGHT=$((SCREEN_HEIGHT - SPACING * (GRID_ROWS - 1)))
+  if [ "$USABLE_WIDTH" -le 0 ] || [ "$USABLE_HEIGHT" -le 0 ]; then
+    echo "Spacing (${SPACING}) is too large for grid ${GRID} at screen ${SCREEN_RES}."
+    return 1
+  fi
+  TILE_WIDTH=$((USABLE_WIDTH / GRID_COLS))
+  TILE_HEIGHT=$((USABLE_HEIGHT / GRID_ROWS))
 
-  echo "Tile size: ${TILE_WIDTH}x${TILE_HEIGHT}"
+  echo "Tile size: ${TILE_WIDTH}x${TILE_HEIGHT} (spacing: ${SPACING}px)"
+  echo "Collage output size: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}"
 
   # Build generic fixed-grid composite filter (used for slideshow rendering).
+  # xstack layout offsets create visible spacing gaps between tiles.
+  CELL_FILTER="$(build_tile_cell_filter "$TILE_WIDTH" "$TILE_HEIGHT")"
   FIXED_COMPOSITE_FILTER=""
   for ((i=0; i<TILE_COUNT; i++)); do
-    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}[${i}:v]scale=${TILE_WIDTH}:${TILE_HEIGHT}:force_original_aspect_ratio=increase,crop=${TILE_WIDTH}:${TILE_HEIGHT}[s${i}];"
+    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}[${i}:v]${CELL_FILTER}[s${i}];"
   done
-  for ((r=0; r<GRID_ROWS; r++)); do
-    row_labels=""
-    for ((c=0; c<GRID_COLS; c++)); do
-      idx=$((r * GRID_COLS + c))
-      row_labels="${row_labels}[s${idx}]"
-    done
-    if [ "$GRID_COLS" -eq 1 ]; then
-      FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}${row_labels}copy[row${r}];"
-    else
-      FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}${row_labels}hstack=inputs=${GRID_COLS}[row${r}];"
-    fi
+  STACK_INPUTS=""
+  STACK_LAYOUT=""
+  for ((i=0; i<TILE_COUNT; i++)); do
+    r=$((i / GRID_COLS))
+    c=$((i % GRID_COLS))
+    x=$((c * (TILE_WIDTH + SPACING)))
+    y=$((r * (TILE_HEIGHT + SPACING)))
+    STACK_INPUTS="${STACK_INPUTS}[s${i}]"
+    STACK_LAYOUT="${STACK_LAYOUT}${x}_${y}|"
   done
-  if [ "$GRID_ROWS" -eq 1 ]; then
-    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}[row0]copy[out]"
+  STACK_LAYOUT="${STACK_LAYOUT%|}"
+  if [ "$TILE_COUNT" -eq 1 ]; then
+    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}[s0]copy[grid];[grid]pad=${SCREEN_WIDTH}:${SCREEN_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[out]"
   else
-    stacked_rows=""
-    for ((r=0; r<GRID_ROWS; r++)); do
-      stacked_rows="${stacked_rows}[row${r}]"
-    done
-    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}${stacked_rows}vstack=inputs=${GRID_ROWS}[out]"
+    FIXED_COMPOSITE_FILTER="${FIXED_COMPOSITE_FILTER}${STACK_INPUTS}xstack=inputs=${TILE_COUNT}:layout=${STACK_LAYOUT}:fill=black[grid];[grid]pad=${SCREEN_WIDTH}:${SCREEN_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[out]"
   fi
 
-  if [ "$INPUT_COUNT" -gt "$TILE_COUNT" ]; then
+  # Spacing requires precomposite rendering path; live lavfi fast path does not
+  # support flexible gaps without significantly more complex graph generation.
+  if [ "$INPUT_COUNT" -gt "$TILE_COUNT" ] || [ "$SPACING" -gt 0 ]; then
     echo "Fixed grid slideshow mode: building composites across all images..."
     COMPOSITE_DIR="$(mktemp -d)"
     ALL_IMAGES=()
@@ -1018,13 +1246,25 @@ tile_effect_fixed() {
       local out_file="$1"
       local filter="$2"
       shift 2
-      nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
-        "$@" \
-        -filter_complex "$filter" \
-        -map "[out]" \
-        -frames:v 1 \
-        -q:v 2 \
-        "$out_file"
+      if [ "$ANIMATE_VIDEOS" = "true" ]; then
+        nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+          "$@" \
+          -filter_complex "$filter" \
+          -map "[out]" \
+          -t "$DURATION" \
+          -r "$FPS" \
+          -an \
+          "${TILE_VIDEO_CODEC_ARGS[@]}" \
+          "$out_file"
+      else
+        nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+          "$@" \
+          -filter_complex "$filter" \
+          -map "[out]" \
+          -frames:v 1 \
+          -q:v 2 \
+          "$out_file"
+      fi
     }
 
     echo "Using ${PARALLEL_JOBS} render job(s) on ${CPU_COUNT} CPU core(s)"
@@ -1035,10 +1275,26 @@ tile_effect_fixed() {
         if [ "$idx" -ge "$total_images" ]; then
           idx=$((total_images - 1))
         fi
-        INPUT_ARGS+=("-i" "${ALL_IMAGES[$idx]}")
+        if [ "$ANIMATE_VIDEOS" = "true" ]; then
+          if is_probably_video_file "${ALL_IMAGES[$idx]}"; then
+            INPUT_ARGS+=("-ss" "$TILE_VIDEO_SEEK" "-i" "${ALL_IMAGES[$idx]}")
+          else
+            INPUT_ARGS+=("-loop" "1" "-t" "$DURATION" "-i" "${ALL_IMAGES[$idx]}")
+          fi
+        else
+          if is_probably_video_file "${ALL_IMAGES[$idx]}"; then
+            INPUT_ARGS+=("-ss" "$TILE_VIDEO_SEEK" "-i" "${ALL_IMAGES[$idx]}")
+          else
+            INPUT_ARGS+=("-i" "${ALL_IMAGES[$idx]}")
+          fi
+        fi
       done
 
-      out_file=$(printf "%s/%04d.jpg" "$COMPOSITE_DIR" "$slide")
+      if [ "$ANIMATE_VIDEOS" = "true" ]; then
+        out_file=$(printf "%s/%04d.mp4" "$COMPOSITE_DIR" "$slide")
+      else
+        out_file=$(printf "%s/%04d.jpg" "$COMPOSITE_DIR" "$slide")
+      fi
       if [ "$PARALLEL_JOBS" -gt 1 ]; then
         render_fixed_slide "$out_file" "$FIXED_COMPOSITE_FILTER" "${INPUT_ARGS[@]}" &
         ACTIVE_PIDS+=("$!")
@@ -1079,15 +1335,17 @@ tile_effect_fixed() {
     printf "\n"
 
     if [ "$render_failures" -gt 0 ]; then
-      echo "Fixed-grid compositing failed for ${render_failures} slide(s)."
-      rm -rf "$COMPOSITE_DIR"
-      return 1
+      echo "Fixed-grid compositing skipped ${render_failures} failed slide(s); continuing with successful renders."
     fi
 
     COMPOSITE_FILES=()
+    local composite_glob='*.jpg'
+    if [ "$ANIMATE_VIDEOS" = "true" ]; then
+      composite_glob='*.mp4'
+    fi
     while IFS= read -r img; do
       COMPOSITE_FILES+=("$img")
-    done < <(find "$COMPOSITE_DIR" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | sort -V)
+    done < <(find "$COMPOSITE_DIR" -maxdepth 1 -type f -name "$composite_glob" 2>/dev/null | sort -V)
 
     if [ "${#COMPOSITE_FILES[@]}" -eq 0 ]; then
       echo "Failed to create fixed-grid composites."
@@ -1097,18 +1355,34 @@ tile_effect_fixed() {
 
     echo "Created ${#COMPOSITE_FILES[@]} fixed-grid composites."
     echo "Starting tiled slideshow..."
-    run_mpv \
-      "--geometry=${SCREEN_RES}+0+0" \
-      "--image-display-duration=${DURATION}" \
-      "--hr-seek=yes" \
-      "--keep-open=no" \
-      "${AUDIO_ARGS[@]}" \
-      "--loop-playlist=inf" \
-      "--media-controls=no" \
-      "--input-media-keys=no" \
-      "--force-media-title=mpv-img-tricks" \
-      "--title=mpv-img-tricks" \
-      "${COMPOSITE_FILES[@]}"
+    if [ "$ANIMATE_VIDEOS" = "true" ]; then
+      run_mpv \
+        "--geometry=${SCREEN_RES}+0+0" \
+        "--fullscreen" \
+        "--hr-seek=yes" \
+        "--keep-open=no" \
+        "${AUDIO_ARGS[@]}" \
+        "--loop-playlist=inf" \
+        "--media-controls=no" \
+        "--input-media-keys=no" \
+        "--force-media-title=mpv-img-tricks" \
+        "--title=mpv-img-tricks" \
+        "${COMPOSITE_FILES[@]}"
+    else
+      run_mpv \
+        "--geometry=${SCREEN_RES}+0+0" \
+        "--fullscreen" \
+        "--image-display-duration=${DURATION}" \
+        "--hr-seek=yes" \
+        "--keep-open=no" \
+        "${AUDIO_ARGS[@]}" \
+        "--loop-playlist=inf" \
+        "--media-controls=no" \
+        "--input-media-keys=no" \
+        "--force-media-title=mpv-img-tricks" \
+        "--title=mpv-img-tricks" \
+        "${COMPOSITE_FILES[@]}"
+    fi
 
     rm -rf "$COMPOSITE_DIR"
     return 0
@@ -1117,6 +1391,7 @@ tile_effect_fixed() {
   # Build mpv command with hstack/vstack using arrays (safe for filenames)
   MPV_ARGS=(
     "--geometry=${SCREEN_RES}+0+0"
+    "--fullscreen"
     "--image-display-duration=${DURATION}"
     "--hr-seek=yes"
     "--keep-open=no"
@@ -1128,38 +1403,32 @@ tile_effect_fixed() {
   )
   MPV_ARGS+=("${AUDIO_ARGS[@]}")
 
-  # Build lavfi-complex filter for tiling
+  # Build generic lavfi-complex filter:
+  # - scale each source into a tile cell
+  # - xstack into grid layout
+  # - pad to exact detected screen resolution
   LAVFI_COMPLEX=""
-
-  if [ $GRID_ROWS -eq 1 ]; then
-    # Single row - use hstack
-    if [ $TILE_COUNT -eq 1 ]; then
-      LAVFI_COMPLEX="[vid1]copy[vo]"
-    elif [ $TILE_COUNT -eq 2 ]; then
-      LAVFI_COMPLEX="[vid1][vid2]hstack[vo]"
-    elif [ $TILE_COUNT -eq 3 ]; then
-      LAVFI_COMPLEX="[vid1][vid2][vid3]hstack=3[vo]"
-    elif [ $TILE_COUNT -eq 4 ]; then
-      LAVFI_COMPLEX="[vid1][vid2][vid3][vid4]hstack=4[vo]"
+  STACK_INPUTS=""
+  STACK_LAYOUT=""
+  for ((i=1; i<=TILE_COUNT; i++)); do
+    idx0=$((i - 1))
+    r=$((idx0 / GRID_COLS))
+    c=$((idx0 % GRID_COLS))
+    x=$((c * (TILE_WIDTH + SPACING)))
+    y=$((r * (TILE_HEIGHT + SPACING)))
+    if [ "$SCALE_MODE" = "fill" ]; then
+      LAVFI_COMPLEX="${LAVFI_COMPLEX}[vid${i}]scale=${TILE_WIDTH}:${TILE_HEIGHT}:force_original_aspect_ratio=increase,crop=${TILE_WIDTH}:${TILE_HEIGHT}[s${idx0}];"
+    else
+      LAVFI_COMPLEX="${LAVFI_COMPLEX}[vid${i}]scale=${TILE_WIDTH}:${TILE_HEIGHT}:force_original_aspect_ratio=decrease,pad=${TILE_WIDTH}:${TILE_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[s${idx0}];"
     fi
+    STACK_INPUTS="${STACK_INPUTS}[s${idx0}]"
+    STACK_LAYOUT="${STACK_LAYOUT}${x}_${y}|"
+  done
+  STACK_LAYOUT="${STACK_LAYOUT%|}"
+  if [ "$TILE_COUNT" -eq 1 ]; then
+    LAVFI_COMPLEX="${LAVFI_COMPLEX}[s0]copy[grid];[grid]pad=${SCREEN_WIDTH}:${SCREEN_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[vo]"
   else
-    # Multiple rows - use hstack + vstack
-    if [ $GRID_ROWS -eq 2 ] && [ $GRID_COLS -eq 2 ]; then
-      # 2x2 grid
-      LAVFI_COMPLEX="[vid1][vid2]hstack[row0];[vid3][vid4]hstack[row1];[row0][row1]vstack[vo]"
-    elif [ $GRID_ROWS -eq 2 ] && [ $GRID_COLS -eq 3 ]; then
-      # 3x2 grid
-      LAVFI_COMPLEX="[vid1][vid2][vid3]hstack=3[row0];[vid4][vid5][vid6]hstack=3[row1];[row0][row1]vstack[vo]"
-    elif [ $GRID_ROWS -eq 3 ] && [ $GRID_COLS -eq 2 ]; then
-      # 2x3 grid
-      LAVFI_COMPLEX="[vid1][vid2]hstack[row0];[vid3][vid4]hstack[row1];[vid5][vid6]hstack[row2];[row0][row1][row2]vstack=3[vo]"
-    fi
-  fi
-
-  if [ -z "$LAVFI_COMPLEX" ]; then
-    echo "Unsupported fixed grid '${GRID}' for current fast path."
-    echo "Supported fixed grids: 1x1, 1x2, 2x1, 1x3, 3x1, 1x4, 4x1, 2x2, 3x2, 2x3"
-    return 1
+    LAVFI_COMPLEX="${LAVFI_COMPLEX}${STACK_INPUTS}xstack=inputs=${TILE_COUNT}:layout=${STACK_LAYOUT}:fill=black[grid];[grid]pad=${SCREEN_WIDTH}:${SCREEN_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[vo]"
   fi
 
   MPV_ARGS+=("--lavfi-complex=${LAVFI_COMPLEX}")
@@ -1237,37 +1506,60 @@ tile_effect_randomized() {
   play_composite_dir() {
     local composite_dir="$1"
     local composite_files=()
+    local composite_glob='*.jpg'
     if [ ! -d "$composite_dir" ]; then
       echo "Composite directory not found: $composite_dir"
       return 1
     fi
-    if ! compgen -G "${composite_dir}/*.jpg" > /dev/null; then
+    if [ "$ANIMATE_VIDEOS" = "true" ]; then
+      composite_glob='*.mp4'
+    fi
+    if ! compgen -G "${composite_dir}/${composite_glob}" > /dev/null; then
       echo "No composite files available to play."
       return 1
     fi
     while IFS= read -r candidate; do
       composite_files+=("$candidate")
-    done < <(find "$composite_dir" -maxdepth 1 -type f -name '*.jpg' 2>/dev/null | sort -V)
+    done < <(find "$composite_dir" -maxdepth 1 -type f -name "$composite_glob" 2>/dev/null | sort -V)
     if [ "${#composite_files[@]}" -eq 0 ]; then
       echo "No readable composite files found."
       return 1
     fi
 
-    run_mpv \
-      "--geometry=${SCREEN_RES}+0+0" \
-      "--image-display-duration=${DURATION}" \
-      "--hr-seek=yes" \
-      "--keep-open=no" \
-      "${AUDIO_ARGS[@]}" \
-      "--shuffle" \
-      "--loop-playlist=inf" \
-      "--background=color" \
-      "--border=no" \
-      "--media-controls=no" \
-      "--input-media-keys=no" \
-      "--force-media-title=mpv-img-tricks" \
-      "--title=mpv-img-tricks" \
-      "${composite_files[@]}"
+    if [ "$ANIMATE_VIDEOS" = "true" ]; then
+      run_mpv \
+        "--geometry=${SCREEN_RES}+0+0" \
+        "--fullscreen" \
+        "--hr-seek=yes" \
+        "--keep-open=no" \
+        "${AUDIO_ARGS[@]}" \
+        "--shuffle" \
+        "--loop-playlist=inf" \
+        "--background=color" \
+        "--border=no" \
+        "--media-controls=no" \
+        "--input-media-keys=no" \
+        "--force-media-title=mpv-img-tricks" \
+        "--title=mpv-img-tricks" \
+        "${composite_files[@]}"
+    else
+      run_mpv \
+        "--geometry=${SCREEN_RES}+0+0" \
+        "--fullscreen" \
+        "--image-display-duration=${DURATION}" \
+        "--hr-seek=yes" \
+        "--keep-open=no" \
+        "${AUDIO_ARGS[@]}" \
+        "--shuffle" \
+        "--loop-playlist=inf" \
+        "--background=color" \
+        "--border=no" \
+        "--media-controls=no" \
+        "--input-media-keys=no" \
+        "--force-media-title=mpv-img-tricks" \
+        "--title=mpv-img-tricks" \
+        "${composite_files[@]}"
+    fi
   }
 
   CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/tile-randomized"
@@ -1282,6 +1574,12 @@ tile_effect_randomized() {
     echo "screen=${SCREEN_RES}"
     echo "group_size=${GROUP_SIZE}"
     echo "layout_mode=dynamic"
+    echo "animate_videos=${ANIMATE_VIDEOS}"
+    echo "encoder=${TILE_VIDEO_ENCODER_OVERRIDE}"
+    echo "duration=${DURATION}"
+    echo "fps=${FPS}"
+    echo "scale_mode=${SCALE_MODE}"
+    echo "spacing=${SPACING}"
   } > "$cache_key_tmp"
 
   if command -v shasum >/dev/null 2>&1; then
@@ -1364,13 +1662,25 @@ tile_effect_randomized() {
     local filter="$2"
     shift 2
     # Use one ffmpeg thread per job to avoid oversubscribing CPUs.
-    nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
-      "$@" \
-      -filter_complex "$filter" \
-      -map "[out]" \
-      -frames:v 1 \
-      -q:v 2 \
-      "$out_file"
+    if [ "$ANIMATE_VIDEOS" = "true" ]; then
+      nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+        "$@" \
+        -filter_complex "$filter" \
+        -map "[out]" \
+        -t "$DURATION" \
+        -r "$FPS" \
+        -an \
+        "${TILE_VIDEO_CODEC_ARGS[@]}" \
+        "$out_file"
+    else
+      nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+        "$@" \
+        -filter_complex "$filter" \
+        -map "[out]" \
+        -frames:v 1 \
+        -q:v 2 \
+        "$out_file"
+    fi
   }
 
   echo "Compositing randomized tiled slides..."
@@ -1397,42 +1707,59 @@ tile_effect_randomized() {
     layout_cols=$(echo "$picked_layout" | cut -d'x' -f1)
     layout_rows=$(echo "$picked_layout" | cut -d'x' -f2)
     tile_count=$((layout_cols * layout_rows))
-    cell_w=$((SCREEN_WIDTH / layout_cols))
-    cell_h=$((SCREEN_HEIGHT / layout_rows))
+    usable_w=$((SCREEN_WIDTH - SPACING * (layout_cols - 1)))
+    usable_h=$((SCREEN_HEIGHT - SPACING * (layout_rows - 1)))
+    if [ "$usable_w" -le 0 ] || [ "$usable_h" -le 0 ]; then
+      echo "Spacing (${SPACING}) too large for layout ${picked_layout}; skipping layout."
+      break
+    fi
+    cell_w=$((usable_w / layout_cols))
+    cell_h=$((usable_h / layout_rows))
 
     INPUT_ARGS=()
     for ((i=0; i<tile_count; i++)); do
-      INPUT_ARGS+=("-i" "${ALL_IMAGES[$((cursor + i))]}")
-    done
-
-    FILTER=""
-    for ((i=0; i<tile_count; i++)); do
-      FILTER="${FILTER}[${i}:v]scale=${cell_w}:${cell_h}:force_original_aspect_ratio=increase,crop=${cell_w}:${cell_h}[s${i}];"
-    done
-
-    for ((r=0; r<layout_rows; r++)); do
-      row_labels=""
-      for ((c=0; c<layout_cols; c++)); do
-        idx=$((r * layout_cols + c))
-        row_labels="${row_labels}[s${idx}]"
-      done
-
-      if [ "$layout_cols" -eq 1 ]; then
-        FILTER="${FILTER}${row_labels}copy[row${r}];"
+      if [ "$ANIMATE_VIDEOS" = "true" ]; then
+        if is_probably_video_file "${ALL_IMAGES[$((cursor + i))]}"; then
+          INPUT_ARGS+=("-ss" "$TILE_VIDEO_SEEK" "-i" "${ALL_IMAGES[$((cursor + i))]}")
+        else
+          INPUT_ARGS+=("-loop" "1" "-t" "$DURATION" "-i" "${ALL_IMAGES[$((cursor + i))]}")
+        fi
       else
-        FILTER="${FILTER}${row_labels}hstack=inputs=${layout_cols}[row${r}];"
+        if is_probably_video_file "${ALL_IMAGES[$((cursor + i))]}"; then
+          INPUT_ARGS+=("-ss" "$TILE_VIDEO_SEEK" "-i" "${ALL_IMAGES[$((cursor + i))]}")
+        else
+          INPUT_ARGS+=("-i" "${ALL_IMAGES[$((cursor + i))]}")
+        fi
       fi
     done
 
-    out_file=$(printf "%s/%04d.jpg" "$COMPOSITE_DIR" "$slide")
-    if [ "$layout_rows" -eq 1 ]; then
-      FILTER="${FILTER}[row0]copy[out]"
+    CELL_FILTER="$(build_tile_cell_filter "$cell_w" "$cell_h")"
+    FILTER=""
+    for ((i=0; i<tile_count; i++)); do
+      FILTER="${FILTER}[${i}:v]${CELL_FILTER}[s${i}];"
+    done
+
+    STACK_INPUTS=""
+    STACK_LAYOUT=""
+    for ((i=0; i<tile_count; i++)); do
+      r=$((i / layout_cols))
+      c=$((i % layout_cols))
+      x=$((c * (cell_w + SPACING)))
+      y=$((r * (cell_h + SPACING)))
+      STACK_INPUTS="${STACK_INPUTS}[s${i}]"
+      STACK_LAYOUT="${STACK_LAYOUT}${x}_${y}|"
+    done
+    STACK_LAYOUT="${STACK_LAYOUT%|}"
+
+    if [ "$ANIMATE_VIDEOS" = "true" ]; then
+      out_file=$(printf "%s/%04d.mp4" "$COMPOSITE_DIR" "$slide")
     else
-      stacked_rows=""
-      for ((r=0; r<layout_rows; r++)); do
-        stacked_rows="${stacked_rows}[row${r}]"
-      done
-      FILTER="${FILTER}${stacked_rows}vstack=inputs=${layout_rows}[out]"
+      out_file=$(printf "%s/%04d.jpg" "$COMPOSITE_DIR" "$slide")
+    fi
+    if [ "$tile_count" -eq 1 ]; then
+      FILTER="${FILTER}[s0]copy[grid];[grid]pad=${SCREEN_WIDTH}:${SCREEN_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[out]"
+    else
+      FILTER="${FILTER}${STACK_INPUTS}xstack=inputs=${tile_count}:layout=${STACK_LAYOUT}:fill=black[grid];[grid]pad=${SCREEN_WIDTH}:${SCREEN_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black[out]"
     fi
 
     echo "$out_file" >> "$PLAYLIST_FILE"
@@ -1503,9 +1830,7 @@ tile_effect_randomized() {
   echo "Memory peak: script=${PEAK_SELF_RSS_KB}KB, active_ffmpeg=${PEAK_ACTIVE_RSS_KB}KB"
 
   if [ "$render_failures" -gt 0 ]; then
-    echo "Compositing failed for ${render_failures} slide(s)."
-    rm -rf "$COMPOSITE_DIR"
-    return 1
+    echo "Randomized compositing skipped ${render_failures} failed slide(s); continuing with successful renders."
   fi
 
   if [ ! -s "$PLAYLIST_FILE" ]; then

@@ -9,13 +9,13 @@ Image slideshow and effects system for creating rapid-fire slideshows and video 
 The scripts are available as global commands after installation. Symlinks have been created in `~/bin`:
 
 - `slideshow` - Image slideshow viewer
-- `image-effects` - Effects and slideshow script
+- `img-effects` - Effects and slideshow script
 - `images-to-video` - Simple image-to-video converter
 
 You can also use them directly from the scripts directory:
 ```bash
 scripts/slideshow.sh ~/pics
-scripts/image-effects.sh basic ~/pics
+scripts/img-effects.sh basic ~/pics
 scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
 ```
 
@@ -25,10 +25,10 @@ scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
 
 ```bash
 # Basic slideshow (fast image cycling)
-image-effects basic ~/pics
+img-effects basic ~/pics
 
 # Chaos mode (shuffled, infinite loop)
-image-effects chaos ~/pics --duration 0.02
+img-effects chaos ~/pics --duration 0.02
 
 # Slideshow with scaling options
 slideshow ~/pics
@@ -38,12 +38,12 @@ slideshow ~/pics
 
 ```bash
 # Ken Burns effect (smooth zoom/pan)
-image-effects ken-burns ~/pics --duration 3 --output slideshow.mp4
+img-effects ken-burns ~/pics --duration 3 --output slideshow.mp4
 
 # Visual effects (glitch, acid, reality, etc.)
-image-effects glitch ~/pics --output glitch.mp4
-image-effects acid ~/pics --output acid-trip.mp4
-image-effects reality ~/pics --output reality-break.mp4
+img-effects glitch ~/pics --output glitch.mp4
+img-effects acid ~/pics --output acid-trip.mp4
+img-effects reality ~/pics --output reality-break.mp4
 
 # Simple video from images
 images-to-video ~/pics 60 1920x1080 out.mp4
@@ -68,9 +68,10 @@ images-to-video ~/pics 60 1920x1080 out.mp4
 
 ## Scripts
 
-- **scripts/image-effects.sh** - Main effects script (slideshows and video effects)
+- **scripts/img-effects.sh** - Main effects script (slideshows, tile mode, and video effects)
 - **scripts/slideshow.sh** - Slideshow with image scaling options
 - **scripts/images-to-video.sh** - Simple image-to-video converter
+- **scripts/mpv-pipeline.sh** - Canonical mpv runtime pipeline shared by entrypoints
 - **mpv-scripts/blast.lua** - mpv script for live speed control and image management
 
 ## Live Controls (with `blast.lua`)
@@ -112,18 +113,29 @@ When using mpv with `--script=mpv-scripts/blast.lua`, you can control playback:
 
 ## Options
 
-### image-effects
+### img-effects
 
 ```bash
-image-effects <effect> <image_dir> [options]
-# or: scripts/image-effects.sh <effect> <image_dir> [options]
+img-effects <effect> <image_dir> [options]
+# or: scripts/img-effects.sh <effect> <image_dir> [options]
 
 Options:
   --duration, -d SECONDS    Duration per image (default: 0.05)
   --output, -o FILE          Output file for video effects
   --resolution, -r SIZE      Output resolution (default: 1920x1080)
   --fps, -f FPS             Frames per second (default: 30)
+  --scale-mode MODE         'fit' or 'fill' (default: fit)
+  --fit                     Alias for --scale-mode fit
+  --fill                    Alias for --scale-mode fill
   --limit, -l COUNT         Max images for video effects (default: 5)
+  --instances, -n COUNT     mpv instances for live effects (basic/chaos)
+  --display INDEX           Target display for single instance/master
+  --display-map CSV         Per-instance display mapping (e.g. 0,1,2)
+  --master-control          Enable master->follower sync for multi-instance
+  --animate-videos          In tile mode, render animated .mp4 grid segments
+                            (prefers HEVC VideoToolbox; falls back if unavailable)
+  --encoder NAME            Animated tile encoder override:
+                            auto|hevc_videotoolbox|libx265|libx264
 ```
 
 ### slideshow
@@ -141,6 +153,13 @@ Scaling Options:
 Watch Mode (Live File Monitoring):
   --watch, -w                Watch for new images and add them to playlist
   --no-recursive              Don't watch subdirectories (only with --watch)
+
+Multi-instance / Display:
+  --instances, -n COUNT      Launch COUNT mpv instances (split playlists)
+  --display INDEX            Target display for single instance/master
+  --display-map CSV          Per-instance display mapping (e.g. 0,1)
+  --master-control           Force master->follower sync in multi-instance mode
+  --no-master-control        Disable sync in multi-instance mode
 ```
 
 **Watch Mode**: When enabled with `--watch`, the slideshow monitors the directory for new image files. When a new image is detected, it's automatically added to the playlist as the next item and the slideshow immediately jumps to it. Requires `fswatch` (install with `brew install fswatch` on macOS).
@@ -151,19 +170,22 @@ Watch Mode (Live File Monitoring):
 images-to-video <image_dir> [img_per_sec] [resolution] [output]
 # Example: images-to-video ~/pics 60 1920x1080 out.mp4
 # or: scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
+
+# Optional preview through canonical mpv pipeline
+images-to-video ~/pics 60 1920x1080 out.mp4 --play --instances 2 --display-map 0,1 --scale-mode fill
 ```
 
 ## More Examples
 
 ```bash
 # Custom resolution and duration
-image-effects glitch ~/pics --duration 0.3 --resolution 1280x720 --output glitch.mp4
+img-effects glitch ~/pics --duration 0.3 --resolution 1280x720 --output glitch.mp4
 
 # High frame rate
-image-effects reality ~/pics --fps 60 --output physics-break.mp4
+img-effects reality ~/pics --fps 60 --output physics-break.mp4
 
 # Process more images
-image-effects acid ~/pics --limit 20 --output trip.mp4
+img-effects acid ~/pics --limit 20 --output trip.mp4
 
 # Fast slideshow
 slideshow ~/pics --duration 0.001
@@ -174,8 +196,14 @@ slideshow ~/pics --watch
 # Live slideshow (non-recursive, current directory only)
 slideshow ~/pics --watch --no-recursive
 
+# Split slideshow across two displays with synchronized controls
+slideshow ~/pics --instances 2 --display-map 0,1 --master-control
+
 # Simple video
 images-to-video ~/pics 30 1920x1080 slideshow.mp4
+
+# Render video and then preview source images via canonical pipeline
+images-to-video ~/pics 30 1920x1080 slideshow.mp4 --play --instances 2
 # Matrix-style effects
 scripts/img-effects.sh matrix ~/pics --output matrix-vision.mp4
 
@@ -187,6 +215,8 @@ scripts/img-effects.sh tile ~/pics --grid 3x2 --duration 2.5
 # Randomized tiling examples
 scripts/img-effects.sh tile ~/pics --randomize --group-size 3 --duration 2
 scripts/img-effects.sh tile ~/pics --randomize --group-size 5 --duration 4
+scripts/img-effects.sh tile "~/videos/*.mov" --randomize --group-size 4 --duration 1.5 --animate-videos
+scripts/img-effects.sh tile "~/videos/*.mov" --randomize --group-size 4 --duration 1.5 --animate-videos --encoder hevc_videotoolbox
 ```
 
 ## Tile Effect Details
@@ -197,6 +227,7 @@ The **tile** effect creates a live slideshow that displays multiple images simul
 - **Automatic screen detection** - Detects your screen resolution for optimal tiling
 - **Ultrawide optimized** - Perfect for 3440x1440, 5120x1440, and other ultrawide displays
 - **Live slideshow** - Images advance through the grid in real-time
+- **Animated video tiles** - Optional moving video playback inside each tile (`--animate-videos`)
 - **Flexible grid sizes** - Support for any grid configuration (1x3, 2x2, 3x2, etc.)
 - **Randomized layouts** - Different grid layouts for each group of images
 - **Group-based tiling** - Process images in customizable groups (3-5 images per group)
@@ -227,6 +258,9 @@ scripts/img-effects.sh tile ~/pics --randomize --group-size 4 --duration 3
 
 # Small groups with random layouts
 scripts/img-effects.sh tile ~/pics --randomize --group-size 3 --duration 2
+
+# Animated MOV tiles (true motion inside each grid cell)
+scripts/img-effects.sh tile "~/videos/*.mov" --randomize --group-size 4 --duration 1.2 --animate-videos
 ```
 
 ### Randomized Tiling:
@@ -247,6 +281,14 @@ The tile effect automatically:
 - Calculates optimal tile sizes for your display
 - Uses mpv's efficient `hstack`/`vstack` filters
 - Creates a seamless slideshow experience
+
+## Development Testing
+
+Run local unit tests during development:
+
+```bash
+./tests/run-unit.sh
+```
 
 ## Future Plans
 

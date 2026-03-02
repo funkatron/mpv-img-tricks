@@ -12,6 +12,11 @@ DOWNSCALE_LARGER="true"
 WATCH_MODE="false"
 RECURSIVE_WATCH="true"
 SHUFFLE_MODE="false"
+INSTANCES="1"
+DISPLAY_INDEX=""
+DISPLAY_MAP=""
+MASTER_CONTROL="auto"
+DEBUG_MODE="false"
 
 # Parse arguments
 shift  # Remove directory from arguments
@@ -53,6 +58,30 @@ while [[ $# -gt 0 ]]; do
       SHUFFLE_MODE="true"
       shift
       ;;
+    --instances|-n)
+      INSTANCES="$2"
+      shift 2
+      ;;
+    --display)
+      DISPLAY_INDEX="$2"
+      shift 2
+      ;;
+    --display-map)
+      DISPLAY_MAP="$2"
+      shift 2
+      ;;
+    --master-control)
+      MASTER_CONTROL="true"
+      shift
+      ;;
+    --no-master-control)
+      MASTER_CONTROL="false"
+      shift
+      ;;
+    --debug)
+      DEBUG_MODE="true"
+      shift
+      ;;
     --help|-h)
       echo "Usage: $0 <image_dir> [options]"
       echo ""
@@ -68,6 +97,12 @@ while [[ $# -gt 0 ]]; do
       echo "  --watch, -w               Watch for new images and add them to playlist"
       echo "  --no-recursive            Don't watch subdirectories (only with --watch)"
       echo "  --shuffle, -S             Shuffle/randomize the playlist"
+      echo "  --instances, -n COUNT     Launch COUNT mpv instances with split playlists"
+      echo "  --display INDEX           Target display index for single instance (or master)"
+      echo "  --display-map CSV         Per-instance display mapping (e.g. 0,1,2)"
+      echo "  --master-control          Force master/follower control sync for multi-instance"
+      echo "  --no-master-control       Disable master/follower control sync for multi-instance"
+      echo "  --debug                   Print resolved canonical runner args"
       echo ""
       echo "Examples:"
       echo "  $0 ~/pics --upscale-smaller --scale-mode fill"
@@ -84,6 +119,10 @@ done
 
 # Expand tilde if present
 DIR="${DIR/#\~/$HOME}"
+if ! [[ "$INSTANCES" =~ ^[0-9]+$ ]] || [ "$INSTANCES" -lt 1 ]; then
+  echo "❌ Invalid --instances value: $INSTANCES (expected positive integer)"
+  exit 1
+fi
 
 echo "🎸 FLEXIBLE IMAGE BLAST"
 echo "📁 Directory: $DIR"
@@ -91,9 +130,12 @@ echo "⏱️  Duration: ${DURATION}s per image"
 echo "🔍 Upscale smaller: $UPSCALE_SMALLER"
 echo "📐 Scale mode: $SCALE_MODE"
 echo "📉 Downscale larger: $DOWNSCALE_LARGER"
+echo "🧩 Instances: $INSTANCES"
+if [[ -n "$DISPLAY_INDEX" ]]; then
+  echo "🖥️  Display: $DISPLAY_INDEX"
+fi
 echo ""
 
-# Build mpv options
 # Resolve script path even when called via symlink
 SCRIPT_PATH="$0"
 if [[ -L "$SCRIPT_PATH" ]]; then
@@ -108,50 +150,10 @@ if [[ -L "$SCRIPT_PATH" ]]; then
   fi
 fi
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
-LUA_SCRIPT="${SCRIPT_DIR}/mpv-scripts/blast.lua"
-
-# Add shuffle option if requested
-if [[ "$SHUFFLE_MODE" == "true" ]]; then
-  SHUFFLE_OPT="--shuffle"
-else
-  SHUFFLE_OPT=""
-fi
-
-# Verify Lua script exists
-if [[ ! -f "$LUA_SCRIPT" ]]; then
-  echo "⚠️  Warning: Lua script not found at $LUA_SCRIPT" >&2
-  echo "   Key bindings will not be available." >&2
-  MPV_OPTS="--image-display-duration=${DURATION} --fullscreen --loop-playlist=inf --no-audio ${SHUFFLE_OPT}"
-else
-  MPV_OPTS="--image-display-duration=${DURATION} --fullscreen --loop-playlist=inf --no-audio ${SHUFFLE_OPT} --script=${LUA_SCRIPT}"
-fi
-
-# Default: mpv automatically scales images to fit window while maintaining aspect ratio
-# Handle scaling mode
-if [[ "$SCALE_MODE" == "fill" ]]; then
-  # Fill mode: stretch to fill window (may distort aspect ratio)
-  MPV_OPTS="${MPV_OPTS} --no-keepaspect"
-else
-  # Fit mode: maintain aspect ratio, scale to fit window (default behavior)
-  MPV_OPTS="${MPV_OPTS} --keepaspect"
-fi
-
-# Handle upscaling smaller images
-if [[ "$UPSCALE_SMALLER" == "true" ]]; then
-  # Upscale smaller images: mpv does this by default with --keepaspect
-  # No special option needed
-  :
-else
-  # Don't upscale: this would require disabling autofit, but mpv always scales to fit
-  # This option is less useful with mpv's default behavior
-  :
-fi
-
-# Handle downscaling larger images
-if [[ "$DOWNSCALE_LARGER" == "false" ]]; then
-  # Don't downscale: show at original size (will be cropped if larger than window)
-  # Disable window aspect ratio locking to allow showing full image
-  MPV_OPTS="${MPV_OPTS} --no-keepaspect-window"
+MPV_PIPELINE="${SCRIPT_DIR}/scripts/mpv-pipeline.sh"
+if [[ ! -f "$MPV_PIPELINE" ]]; then
+  echo "❌ Canonical runner not found: $MPV_PIPELINE" >&2
+  exit 1
 fi
 
 # Check if directory exists
@@ -176,13 +178,47 @@ echo "📸 Found $COUNT images"
 # Set up IPC socket for watch mode
 IPC_SOCKET=""
 if [[ "$WATCH_MODE" == "true" ]]; then
+  if [[ "$INSTANCES" != "1" ]]; then
+    echo "❌ --watch currently requires --instances 1" >&2
+    rm -f "$TMPLIST"
+    exit 1
+  fi
   IPC_SOCKET="$(mktemp -u /tmp/mpv-slideshow-XXXXXX.socket)"
-  MPV_OPTS="${MPV_OPTS} --input-ipc-server=${IPC_SOCKET}"
   echo "👁️  Watch mode enabled (recursive: $RECURSIVE_WATCH)"
 fi
 
 echo "🚀 Starting slideshow..."
 echo ""
+
+PIPELINE_ARGS=(
+  --playlist "$TMPLIST"
+  --duration "$DURATION"
+  --fullscreen yes
+  --loop-mode playlist
+  --scale-mode "$SCALE_MODE"
+  --downscale-larger "$DOWNSCALE_LARGER"
+  --instances "$INSTANCES"
+  --master-control "$MASTER_CONTROL"
+)
+
+if [[ "$SHUFFLE_MODE" == "true" ]]; then
+  PIPELINE_ARGS+=(--shuffle yes)
+else
+  PIPELINE_ARGS+=(--shuffle no)
+fi
+
+if [[ -n "$DISPLAY_INDEX" ]]; then
+  PIPELINE_ARGS+=(--display "$DISPLAY_INDEX")
+fi
+if [[ -n "$DISPLAY_MAP" ]]; then
+  PIPELINE_ARGS+=(--display-map "$DISPLAY_MAP")
+fi
+if [[ -n "$IPC_SOCKET" ]]; then
+  PIPELINE_ARGS+=(--watch-ipc-socket "$IPC_SOCKET")
+fi
+if [[ "$DEBUG_MODE" == "true" ]]; then
+  PIPELINE_ARGS+=(--debug yes)
+fi
 
 # Function to send JSON command to mpv IPC
 send_mpv_command() {
@@ -289,7 +325,7 @@ if [[ "$WATCH_MODE" == "true" ]]; then
 fi
 
 # Run the slideshow using the playlist file
-if ! mpv ${MPV_OPTS} --playlist="$TMPLIST" 2>/dev/null; then
+if ! "$MPV_PIPELINE" "${PIPELINE_ARGS[@]}" 2>/dev/null; then
   echo "Error: Failed to start slideshow" >&2
   # Clean up watcher if running
   if [[ -n "$WATCHER_PID" ]]; then
