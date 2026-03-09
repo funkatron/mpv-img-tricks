@@ -71,9 +71,9 @@ images-to-video ~/pics 60 1920x1080 out.mp4
 
 ## Scripts
 
-- **scripts/img-effects.sh** - Main effects script (slideshows, tile mode, and video effects)
-- **scripts/slideshow.sh** - Slideshow with image scaling options
-- **scripts/images-to-video.sh** - Simple image-to-video converter
+- **scripts/slideshow.sh** - Primary slideshow command with scaling and multi-instance options
+- **scripts/img-effects.sh** - Compatibility entrypoint for effects/slideshow modes
+- **scripts/images-to-video.sh** - Compatibility entrypoint for image-to-video rendering
 - **scripts/mpv-pipeline.sh** - Canonical mpv runtime pipeline shared by entrypoints
 - **mpv-scripts/blast.lua** - mpv script for live speed control and image management
 
@@ -190,6 +190,10 @@ images-to-video <image_dir> [img_per_sec] [resolution] [output]
 # Optional preview through canonical mpv pipeline
 images-to-video ~/pics 60 1920x1080 out.mp4 --play --instances 2 --display-map 0,1 --scale-mode fill
 ```
+
+Preview options for `--play` mode:
+- `--scale-mode MODE` where `MODE` is `fit|fill|stretch`
+- `--instances`, `--display`, `--display-map`, `--master-control`
 
 ## More Examples
 
@@ -309,6 +313,11 @@ If you previously used `fill` to force stretching, switch to:
 ```bash
 slideshow ~/pics --scale-mode stretch
 ```
+
+Scale mode semantics:
+- `fit` = contain/letterbox (AR preserved)
+- `fill` = cover/crop (AR preserved)
+- `stretch` = fill window without preserving AR
 
 ## Development Testing
 
