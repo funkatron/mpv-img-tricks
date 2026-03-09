@@ -4,6 +4,9 @@
 
 Image slideshow and effects system for creating rapid-fire slideshows and video effects from image collections.
 
+Primary CLI: `slideshow`.  
+Compatibility entrypoints: `img-effects`, `images-to-video`.
+
 ## Installation
 
 The scripts are available as global commands after installation. Symlinks have been created in `~/bin`:
@@ -74,6 +77,18 @@ images-to-video ~/pics 60 1920x1080 out.mp4
 - **scripts/mpv-pipeline.sh** - Canonical mpv runtime pipeline shared by entrypoints
 - **mpv-scripts/blast.lua** - mpv script for live speed control and image management
 
+## Experimental Python CLI (Spike)
+
+An opt-in Python wrapper is available at `python/slideshow_cli.py`. It delegates to existing shell entrypoints and does not replace them.
+
+Examples:
+
+```bash
+python3 python/slideshow_cli.py live ~/pics --scale-mode fill
+python3 python/slideshow_cli.py tile "~/videos/*.mov" --randomize --animate-videos
+python3 python/slideshow_cli.py render ~/pics --img-per-sec 60 --output out.mp4 --play
+```
+
 ## Live Controls (with `blast.lua`)
 
 When using mpv with `--script=mpv-scripts/blast.lua`, you can control playback:
@@ -113,7 +128,7 @@ When using mpv with `--script=mpv-scripts/blast.lua`, you can control playback:
 
 ## Options
 
-### img-effects
+### img-effects (compatibility entrypoint)
 
 ```bash
 img-effects <effect> <image_dir> [options]
@@ -138,14 +153,15 @@ Options:
                             auto|hevc_videotoolbox|libx265|libx264
 ```
 
-### slideshow
+### slideshow (primary command)
 
 ```bash
-slideshow <image_dir> [options]
-# or: scripts/slideshow.sh <image_dir> [options]
+slideshow [options] <image_dir>
+# or: scripts/slideshow.sh [options] <image_dir>
 
 Scaling Options:
-  --scale-mode MODE          'fit' or 'fill' (default: fit)
+  --scale-mode MODE          fit|fill|stretch (default: fit)
+                            fit=letterbox, fill=cover/crop, stretch=legacy stretch
   --no-upscale-smaller       Don't upscale smaller images
   --no-downscale-larger      Don't downscale larger images
   --duration SECONDS         Duration per image (default: 0.001)
@@ -192,6 +208,9 @@ slideshow ~/pics --duration 0.001
 
 # Live slideshow (watches for new images)
 slideshow ~/pics --watch
+
+# Option-first invocation style also works
+slideshow --scale-mode fill ~/pics
 
 # Live slideshow (non-recursive, current directory only)
 slideshow ~/pics --watch --no-recursive
@@ -281,6 +300,15 @@ The tile effect automatically:
 - Calculates optimal tile sizes for your display
 - Uses mpv's efficient `hstack`/`vstack` filters
 - Creates a seamless slideshow experience
+
+## Scale Mode Migration
+
+`slideshow --scale-mode fill` now means cover/crop with aspect ratio preserved.  
+If you previously used `fill` to force stretching, switch to:
+
+```bash
+slideshow ~/pics --scale-mode stretch
+```
 
 ## Development Testing
 

@@ -25,6 +25,17 @@ set -euo pipefail
 #   img-effects acid ~/pics --resolution 1920x1080
 #   img-effects tile ~/pics --grid 2x2 --spacing 12
 
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SOURCE" ]]; do
+  LINK_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="${LINK_DIR}/${SCRIPT_SOURCE}"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+source "${SCRIPT_DIR}/lib/path.sh"
+source "${SCRIPT_DIR}/lib/pipeline.sh"
+source "${SCRIPT_DIR}/lib/validate.sh"
+
 # Default values
 EFFECT="${1:-basic}"
 DURATION="0.05"
@@ -360,10 +371,7 @@ if ! [[ "$SPACING" =~ ^[0-9]+$ ]]; then
   echo "Invalid --spacing value: $SPACING (expected non-negative integer)"
   exit 1
 fi
-if ! [[ "$MPV_INSTANCES" =~ ^[0-9]+$ ]] || [ "$MPV_INSTANCES" -lt 1 ]; then
-  echo "Invalid --instances value: $MPV_INSTANCES (expected positive integer)"
-  exit 1
-fi
+require_positive_int "$MPV_INSTANCES" "--instances" || exit 1
 case "$ANIMATE_VIDEOS" in
   true|false)
     ;;
@@ -485,19 +493,6 @@ fi
 TOTAL=$(wc -l < "$TMPLIST")
 echo "Processing $TOTAL images with '$EFFECT' effect..."
 
-get_mpv_pipeline_path() {
-  local source="${BASH_SOURCE[0]}"
-  while [[ -L "$source" ]]; do
-    local dir
-    dir="$(cd "$(dirname "$source")" && pwd)"
-    source="$(readlink "$source")"
-    [[ "$source" != /* ]] && source="${dir}/${source}"
-  done
-  local repo_root
-  repo_root="$(cd "$(dirname "$source")/.." >/dev/null 2>&1 && pwd)"
-  echo "${repo_root}/scripts/mpv-pipeline.sh"
-}
-
 create_random_scale_script() {
   RANDOM_SCALE_LUA_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/mpv-img-tricks-random-scale.XXXXXX.lua")"
   cat > "$RANDOM_SCALE_LUA_SCRIPT" << 'EOF'
@@ -517,7 +512,7 @@ run_live_pipeline_effect() {
   local loop_mode
   local fullscreen_mode
 
-  mpv_pipeline="$(get_mpv_pipeline_path)"
+  mpv_pipeline="$(resolve_mpv_pipeline_path "$SCRIPT_SOURCE")"
   if [ ! -x "$mpv_pipeline" ]; then
     echo "Canonical runner not executable: $mpv_pipeline"
     exit 1
@@ -539,14 +534,10 @@ run_live_pipeline_effect() {
   esac
 
   build_audio_args
+  build_pipeline_common_args "$DURATION" "$fullscreen_mode" "$loop_mode" "$SCALE_MODE" "$MPV_INSTANCES" "$MASTER_CONTROL_MODE"
   local -a pipeline_args=(
     --playlist "$TMPLIST"
-    --duration "$DURATION"
-    --fullscreen "$fullscreen_mode"
-    --loop-mode "$loop_mode"
-    --scale-mode "$SCALE_MODE"
-    --instances "$MPV_INSTANCES"
-    --master-control "$MASTER_CONTROL_MODE"
+    "${PIPELINE_COMMON_ARGS[@]}"
     --debug "$DEBUG"
     --mpv-arg "--hr-seek=yes"
     --mpv-arg "--keep-open=no"

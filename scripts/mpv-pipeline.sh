@@ -11,7 +11,7 @@ PLAYLIST_FILE=""
 FULLSCREEN="true"
 SHUFFLE="false"
 LOOP_MODE="playlist" # none|file|playlist
-SCALE_MODE="fit"     # fit|fill
+SCALE_MODE="fit"     # fit|fill|stretch
 DOWNSCALE_LARGER="true"
 USE_BLAST_SCRIPT="true"
 NO_AUDIO="true"
@@ -40,7 +40,7 @@ Options:
   --fullscreen yes|no             Fullscreen toggle (default: yes)
   --shuffle yes|no                Shuffle toggle
   --loop-mode MODE                none|file|playlist (default: playlist)
-  --scale-mode MODE               fit|fill (default: fit)
+  --scale-mode MODE               fit|fill|stretch (default: fit)
   --downscale-larger yes|no       Keep/downscale larger images (default: yes)
   --use-blast-script yes|no       Load mpv-scripts/blast.lua if present
   --no-audio yes|no               Pass --no-audio (default: yes)
@@ -100,13 +100,17 @@ collect_loop_flags() {
 collect_scale_flags() {
   case "$SCALE_MODE" in
     fit)
-      printf '%s\n' "--keepaspect"
+      printf '%s\n' "--keepaspect" "--panscan=0.0"
       ;;
     fill)
+      # Cover/crop while preserving aspect ratio.
+      printf '%s\n' "--keepaspect" "--panscan=1.0"
+      ;;
+    stretch)
       printf '%s\n' "--no-keepaspect"
       ;;
     *)
-      die "Invalid --scale-mode '$SCALE_MODE' (expected fit|fill)"
+      die "Invalid --scale-mode '$SCALE_MODE' (expected fit|fill|stretch)"
       ;;
   esac
 

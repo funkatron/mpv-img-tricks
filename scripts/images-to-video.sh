@@ -4,6 +4,18 @@ set -euo pipefail
 # Usage: scripts/images-to-video.sh <images_dir> [img_per_sec] [resolution] [output]
 # Example: scripts/images-to-video.sh ~/cool-pics 60 1920x1080 out.mp4
 
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SOURCE" ]]; do
+  LINK_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="${LINK_DIR}/${SCRIPT_SOURCE}"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+source "${SCRIPT_DIR}/lib/path.sh"
+source "${SCRIPT_DIR}/lib/discovery.sh"
+source "${SCRIPT_DIR}/lib/validate.sh"
+source "${SCRIPT_DIR}/lib/pipeline.sh"
+
 PLAY_AFTER_RENDER="false"
 PLAY_INSTANCES="1"
 PLAY_DISPLAY=""
@@ -29,7 +41,7 @@ Options:
   --display-map CSV         Per-instance display map for --play
   --master-control          Force master/follower sync for --play multi-instance
   --no-master-control       Disable master/follower sync for --play multi-instance
-  --scale-mode MODE         Preview scaling mode for --play: fit|fill (default: fit)
+  --scale-mode MODE         Preview scaling mode for --play: fit|fill|stretch (default: fit)
   --fit                    Alias for --scale-mode fit
   --fill                   Alias for --scale-mode fill
   --debug                   Print resolved canonical runner args for --play
@@ -96,25 +108,15 @@ IPS="${POSITIONAL[1]:-60}"              # images per second
 RES="${POSITIONAL[2]:-1920x1080}"
 OUT="${POSITIONAL[3]:-flipbook.mp4}"
 
-if ! [[ "$PLAY_INSTANCES" =~ ^[0-9]+$ ]] || [ "$PLAY_INSTANCES" -lt 1 ]; then
-  echo "Error: invalid --instances value '$PLAY_INSTANCES' (expected positive integer)" >&2
-  exit 1
-fi
-case "$PLAY_SCALE_MODE" in
-  fit|fill)
-    ;;
-  *)
-    echo "Error: invalid --scale-mode value '$PLAY_SCALE_MODE' (expected fit or fill)" >&2
-    exit 1
-    ;;
-esac
+require_positive_int "$PLAY_INSTANCES" "--instances" || exit 1
+require_scale_mode "$PLAY_SCALE_MODE" || exit 1
 
 # Expand tilde if present
 DIR="${DIR/#\~/$HOME}"
 
 # Find images and create sorted list
 TMPLIST="$(mktemp)"
-find "$DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null | sort -V > "$TMPLIST"
+discover_images_to_playlist "$DIR" "$TMPLIST" "true"
 
 if [ ! -s "$TMPLIST" ]; then
   echo "Error: No images found in $DIR" >&2
@@ -154,17 +156,7 @@ echo "✓ Video created: $OUT"
 echo "Play with: mpv --fs \"$OUT\""
 
 if [[ "$PLAY_AFTER_RENDER" == "true" ]]; then
-  SCRIPT_PATH="${BASH_SOURCE[0]}"
-  while [[ -L "$SCRIPT_PATH" ]]; do
-    LINK_TARGET="$(readlink "$SCRIPT_PATH")"
-    if [[ "$LINK_TARGET" == /* ]]; then
-      SCRIPT_PATH="$LINK_TARGET"
-    else
-      SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_PATH")" && cd "$(dirname "$LINK_TARGET")" && pwd)/$(basename "$LINK_TARGET")"
-    fi
-  done
-  REPO_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
-  MPV_PIPELINE="${REPO_ROOT}/scripts/mpv-pipeline.sh"
+  MPV_PIPELINE="$(resolve_mpv_pipeline_path "$SCRIPT_SOURCE")"
 
   if [[ ! -x "$MPV_PIPELINE" ]]; then
     echo "Error: canonical runner not executable: $MPV_PIPELINE" >&2
@@ -172,24 +164,15 @@ if [[ "$PLAY_AFTER_RENDER" == "true" ]]; then
   fi
 
   PLAYLIST_FILE="$(mktemp)"
-  find "$DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null | sort -V > "$PLAYLIST_FILE"
+  discover_images_to_playlist "$DIR" "$PLAYLIST_FILE" "true"
   if [[ ! -s "$PLAYLIST_FILE" ]]; then
     echo "Error: no source images available for --play preview" >&2
     rm -f "$PLAYLIST_FILE"
     exit 1
   fi
 
-  PIPELINE_ARGS=(
-    --playlist "$PLAYLIST_FILE"
-    --duration "0.05"
-    --fullscreen yes
-    --shuffle no
-    --loop-mode none
-    --scale-mode "$PLAY_SCALE_MODE"
-    --instances "$PLAY_INSTANCES"
-    --master-control "$PLAY_MASTER_CONTROL"
-    --debug "$DEBUG_MODE"
-  )
+  build_pipeline_common_args "0.05" "yes" "none" "$PLAY_SCALE_MODE" "$PLAY_INSTANCES" "$PLAY_MASTER_CONTROL"
+  PIPELINE_ARGS=(--playlist "$PLAYLIST_FILE" --shuffle no --debug "$DEBUG_MODE" "${PIPELINE_COMMON_ARGS[@]}")
   if [[ -n "$PLAY_DISPLAY" ]]; then
     PIPELINE_ARGS+=(--display "$PLAY_DISPLAY")
   fi

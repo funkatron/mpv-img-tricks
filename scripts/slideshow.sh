@@ -3,11 +3,23 @@
 # Image slideshow with scaling options
 # Usage: ./slideshow.sh <image_dir> [options]
 
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SOURCE" ]]; do
+  LINK_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="${LINK_DIR}/${SCRIPT_SOURCE}"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+source "${SCRIPT_DIR}/lib/path.sh"
+source "${SCRIPT_DIR}/lib/discovery.sh"
+source "${SCRIPT_DIR}/lib/validate.sh"
+source "${SCRIPT_DIR}/lib/pipeline.sh"
+
 # Default values
 DURATION="0.001"
-DIR="${1:-dead-agent-images/}"
+DIR=""
 UPSCALE_SMALLER="true"
-SCALE_MODE="fit"  # fit or fill
+SCALE_MODE="fit"  # fit|fill|stretch
 DOWNSCALE_LARGER="true"
 WATCH_MODE="false"
 RECURSIVE_WATCH="true"
@@ -18,12 +30,15 @@ DISPLAY_MAP=""
 MASTER_CONTROL="auto"
 DEBUG_MODE="false"
 
-# Parse arguments
-shift  # Remove directory from arguments
+# Parse arguments (support both option-first and dir-first styles).
 while [[ $# -gt 0 ]]; do
   case $1 in
     --duration|-d)
-      DURATION="$2"
+      DURATION="${2:-}"
+      if [[ -z "$DURATION" ]]; then
+        echo "Error: missing value for $1" >&2
+        exit 1
+      fi
       shift 2
       ;;
     --upscale-smaller|-u)
@@ -35,7 +50,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --scale-mode|-s)
-      SCALE_MODE="$2"
+      SCALE_MODE="${2:-}"
+      if [[ -z "$SCALE_MODE" ]]; then
+        echo "Error: missing value for $1" >&2
+        exit 1
+      fi
       shift 2
       ;;
     --downscale-larger|-D)
@@ -59,15 +78,27 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --instances|-n)
-      INSTANCES="$2"
+      INSTANCES="${2:-}"
+      if [[ -z "$INSTANCES" ]]; then
+        echo "Error: missing value for $1" >&2
+        exit 1
+      fi
       shift 2
       ;;
     --display)
-      DISPLAY_INDEX="$2"
+      DISPLAY_INDEX="${2:-}"
+      if [[ -z "$DISPLAY_INDEX" ]]; then
+        echo "Error: missing value for $1" >&2
+        exit 1
+      fi
       shift 2
       ;;
     --display-map)
-      DISPLAY_MAP="$2"
+      DISPLAY_MAP="${2:-}"
+      if [[ -z "$DISPLAY_MAP" ]]; then
+        echo "Error: missing value for $1" >&2
+        exit 1
+      fi
       shift 2
       ;;
     --master-control)
@@ -83,12 +114,13 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      echo "Usage: $0 <image_dir> [options]"
+      echo "Usage: $0 [options] <image_dir>"
       echo ""
       echo "Scaling Options:"
       echo "  --upscale-smaller, -u     Upscale images smaller than window in both dimensions (default)"
       echo "  --no-upscale-smaller, -U   Don't upscale smaller images"
-      echo "  --scale-mode, -s MODE     Set scaling mode: 'fit' or 'fill' (default: fit)"
+      echo "  --scale-mode, -s MODE     Scaling mode: fit|fill|stretch (default: fit)"
+      echo "                            fit=letterbox, fill=cover/crop, stretch=legacy stretch"
       echo "  --downscale-larger, -D    Downscale images larger than window (default)"
       echo "  --no-downscale-larger      Don't downscale larger images"
       echo ""
@@ -106,21 +138,37 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Examples:"
       echo "  $0 ~/pics --upscale-smaller --scale-mode fill"
+      echo "  $0 --scale-mode stretch ~/pics"
       echo "  $0 ~/pics --no-downscale-larger --scale-mode fit"
       exit 0
       ;;
     *)
-      echo "Unknown option: $1"
-      echo "Use --help for usage information"
-      exit 1
+      if [[ "$1" == -* ]]; then
+        echo "Error: unknown option '$1'" >&2
+        echo "Use --help for usage information" >&2
+        exit 1
+      fi
+      if [[ -z "$DIR" ]]; then
+        DIR="$1"
+        shift
+      else
+        echo "Error: unexpected extra argument '$1'" >&2
+        echo "Usage: $0 [options] <image_dir>" >&2
+        exit 1
+      fi
       ;;
   esac
 done
 
+# Set default directory if omitted.
+DIR="${DIR:-dead-agent-images/}"
+
 # Expand tilde if present
 DIR="${DIR/#\~/$HOME}"
-if ! [[ "$INSTANCES" =~ ^[0-9]+$ ]] || [ "$INSTANCES" -lt 1 ]; then
-  echo "❌ Invalid --instances value: $INSTANCES (expected positive integer)"
+require_positive_int "$INSTANCES" "--instances" || exit 1
+require_scale_mode "$SCALE_MODE" || exit 1
+if [[ ! -d "$DIR" ]]; then
+  echo "Error: directory not found: $DIR" >&2
   exit 1
 fi
 
@@ -136,38 +184,21 @@ if [[ -n "$DISPLAY_INDEX" ]]; then
 fi
 echo ""
 
-# Resolve script path even when called via symlink
-SCRIPT_PATH="$0"
-if [[ -L "$SCRIPT_PATH" ]]; then
-  # If called via symlink, resolve to actual script location
-  LINK_TARGET="$(readlink "$SCRIPT_PATH")"
-  if [[ "$LINK_TARGET" == /* ]]; then
-    # Absolute symlink
-    SCRIPT_PATH="$LINK_TARGET"
-  else
-    # Relative symlink - resolve relative to symlink location
-    SCRIPT_PATH="$(cd "$(dirname "$SCRIPT_PATH")" && cd "$(dirname "$LINK_TARGET")" && pwd)/$(basename "$LINK_TARGET")"
-  fi
-fi
-SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
-MPV_PIPELINE="${SCRIPT_DIR}/scripts/mpv-pipeline.sh"
-if [[ ! -f "$MPV_PIPELINE" ]]; then
-  echo "❌ Canonical runner not found: $MPV_PIPELINE" >&2
+# Resolve canonical runner path even when script is symlinked.
+RESOLVED_SOURCE="$(resolve_script_path "$SCRIPT_SOURCE")"
+MPV_PIPELINE="$(resolve_mpv_pipeline_path "$RESOLVED_SOURCE")"
+if [[ ! -x "$MPV_PIPELINE" ]]; then
+  echo "Error: canonical runner not executable: $MPV_PIPELINE" >&2
   exit 1
 fi
 
 # Check if directory exists
-if [[ ! -d "$DIR" ]]; then
-  echo "❌ Directory not found: $DIR"
-  exit 1
-fi
-
 # Find images and create a temporary playlist file
 TMPLIST="$(mktemp)"
-find "$DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) | sort -V > "$TMPLIST"
+discover_images_to_playlist "$DIR" "$TMPLIST" "true"
 
 if [[ ! -s "$TMPLIST" ]]; then
-  echo "❌ No images found in $DIR"
+  echo "Error: no images found in $DIR" >&2
   rm -f "$TMPLIST"
   exit 1
 fi
@@ -179,7 +210,7 @@ echo "📸 Found $COUNT images"
 IPC_SOCKET=""
 if [[ "$WATCH_MODE" == "true" ]]; then
   if [[ "$INSTANCES" != "1" ]]; then
-    echo "❌ --watch currently requires --instances 1" >&2
+    echo "Error: --watch currently requires --instances 1" >&2
     rm -f "$TMPLIST"
     exit 1
   fi
@@ -190,15 +221,11 @@ fi
 echo "🚀 Starting slideshow..."
 echo ""
 
+build_pipeline_common_args "$DURATION" "yes" "playlist" "$SCALE_MODE" "$INSTANCES" "$MASTER_CONTROL"
 PIPELINE_ARGS=(
   --playlist "$TMPLIST"
-  --duration "$DURATION"
-  --fullscreen yes
-  --loop-mode playlist
-  --scale-mode "$SCALE_MODE"
+  "${PIPELINE_COMMON_ARGS[@]}"
   --downscale-larger "$DOWNSCALE_LARGER"
-  --instances "$INSTANCES"
-  --master-control "$MASTER_CONTROL"
 )
 
 if [[ "$SHUFFLE_MODE" == "true" ]]; then
