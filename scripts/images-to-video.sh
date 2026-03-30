@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: scripts/images-to-video.sh <images_dir> [img_per_sec] [resolution] [output]
-# Example: scripts/images-to-video.sh ~/cool-pics 60 1920x1080 out.mp4
+# Bash backend for plain image→video render (invoked by ./slideshow live --render).
+# End users: ./slideshow live <dir> --render …
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SCRIPT_SOURCE" ]]; do

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# mpv-img-tricks: Unified script with modular effects
-# Usage: img-effects <effect> <images_dir> [options]
-#    or: scripts/img-effects.sh <effect> <images_dir> [options]
+# mpv-img-tricks: Unified script with modular effects (invoked by ./slideshow live).
+# End users: ./slideshow live <dir> --effect <name> [options]
+# This file is the Bash backend; do not treat it as a public entrypoint.
 #
 # Effects:
 #   basic     - Simple slideshow (like original blast.sh)

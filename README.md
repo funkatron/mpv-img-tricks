@@ -8,17 +8,17 @@ Primary command: `./slideshow live`
 
 This is a personal utility project. Breaking CLI changes are acceptable when they simplify the workflow.
 
-**Defaults:** Omitted `--duration` uses **2.0** seconds per image (Python CLI default and shell backends via [`scripts/lib/constants.sh`](scripts/lib/constants.sh)). Use `--duration 0.02` (or lower) for rapid cycling.
+**Defaults:** Omitted `--duration` uses **2.0** seconds per image. The shared value lives in [`scripts/lib/constants.sh`](scripts/lib/constants.sh). Use `--duration 0.02` (or lower) for rapid cycling.
 
-**Advanced:** Set `MPV_IMG_TRICKS_SCRIPTS_DIR` to a directory containing `slideshow.sh`, `img-effects.sh`, and `images-to-video.sh` to override the normal `scripts/` resolution (used by unit tests and custom layouts).
+**Advanced:** Set `MPV_IMG_TRICKS_SCRIPTS_DIR` to override where the CLI loads its Bash implementation from (defaults to `scripts/` beside the repo root). Used by `./tests/run-unit.sh` and nonstandard checkouts.
 
 ## Installation
 
-No installer is required. Run the unified CLI directly from the repo root:
+No installer is required. Run the unified CLI from the repo root:
 
-- `./slideshow live` - Live slideshow entrypoint
+- `./slideshow live` — primary interface
 
-Current shell scripts remain as internal backends for the Python CLI and are no longer the documented user interface.
+Equivalent: `python python/slideshow_cli.py live …` (same behavior as `./slideshow`).
 
 Examples:
 ```bash
@@ -74,14 +74,9 @@ Examples:
 - **matrix** - Matrix effect
 - **liquid** - Liquid distortion effect
 
-## Scripts
+## Implementation note
 
-- **slideshow** - Unified CLI entrypoint
-- **scripts/slideshow.sh** - Internal backend for plain live slideshow behavior
-- **scripts/img-effects.sh** - Internal backend for effect execution
-- **scripts/images-to-video.sh** - Internal backend for plain image-to-video rendering
-- **scripts/mpv-pipeline.sh** - Canonical mpv runtime pipeline shared by scripts
-- **mpv-scripts/blast.lua** - mpv script for live speed control and image management
+Orchestration is implemented in Bash modules under `scripts/` and is invoked only through `./slideshow` (or `python/slideshow_cli.py`). Live key bindings come from [`mpv-scripts/blast.lua`](mpv-scripts/blast.lua). You do not need to run anything under `scripts/` directly.
 
 ## Live Controls (with `blast.lua`)
 
@@ -274,7 +269,7 @@ The tile effect automatically:
 
 ## Scale Modes (Current)
 
-Scale mode semantics for current scripts:
+Scale mode semantics for the slideshow CLI:
 - `fit` = contain/letterbox (AR preserved)
 - `fill` = cover/crop (AR preserved)
 - `stretch` = fill window without preserving AR

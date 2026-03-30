@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Image slideshow with scaling options
-# Usage: ./slideshow.sh <image_dir> [options]
+# Bash backend for live slideshow (invoked by ./slideshow live).
+# End users: ./slideshow live <image_dir> [options]
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SCRIPT_SOURCE" ]]; do
