@@ -19,3 +19,7 @@
 # Temporary files
 *.tmp
 *.temp
+
+# Python
+python/__pycache__/
+*.pyc

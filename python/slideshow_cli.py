@@ -1,160 +1,283 @@
 #!/usr/bin/env python3
-"""Experimental Python CLI spike for mpv-img-tricks.
+"""Unified CLI for mpv-img-tricks.
 
-This wrapper intentionally delegates execution to the existing shell scripts.
-It is opt-in and non-default.
+The Python layer owns argument parsing and delegates execution to the existing
+shell backends so behavior stays aligned while the interface is consolidated.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_DIR = REPO_ROOT / "scripts"
+SCRIPTS_DIR = Path(os.environ.get("MPV_IMG_TRICKS_SCRIPTS_DIR", REPO_ROOT / "scripts"))
+LIVE_EFFECTS = {"basic", "chaos", "tile"}
+RENDER_EFFECTS = {
+    "glitch",
+    "acid",
+    "reality",
+    "kaleido",
+    "matrix",
+    "liquid",
+    "ken-burns",
+    "crossfade",
+}
+ALL_EFFECTS = sorted(LIVE_EFFECTS | RENDER_EFFECTS)
 
 
 def run_command(cmd: list[str]) -> int:
-  return subprocess.run(cmd, check=False).returncode
+    return subprocess.run(cmd, check=False).returncode
 
 
-def add_common_live_args(parser: argparse.ArgumentParser) -> None:
-  parser.add_argument("images_dir", help="Source image directory")
-  parser.add_argument("--duration", "-d", default="0.001")
-  parser.add_argument("--scale-mode", default="fit", choices=["fit", "fill", "stretch"])
-  parser.add_argument("--instances", "-n", default="1")
-  parser.add_argument("--display")
-  parser.add_argument("--display-map")
-  parser.add_argument("--master-control", action="store_true")
-  parser.add_argument("--no-master-control", action="store_true")
-  parser.add_argument("--shuffle", action="store_true")
-  parser.add_argument("--watch", action="store_true")
-  parser.add_argument("--no-recursive", action="store_true")
-  parser.add_argument("--debug", action="store_true")
+def add_display_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--duration", "-d", default="2.0", help="Duration per image")
+    parser.add_argument(
+        "--scale-mode",
+        default="fit",
+        choices=["fit", "fill", "stretch"],
+        help="Image scaling mode",
+    )
+    parser.add_argument("--instances", "-n", default="1", help="Number of mpv instances")
+    parser.add_argument("--display", help="Display index for the single instance or master")
+    parser.add_argument("--display-map", help="Per-instance display map CSV")
+    parser.add_argument("--master-control", action="store_true", help="Force master control sync")
+    parser.add_argument(
+        "--no-master-control",
+        action="store_true",
+        help="Disable master control sync",
+    )
 
 
-def handle_live(args: argparse.Namespace) -> int:
-  cmd = [str(SCRIPTS_DIR / "slideshow.sh"), args.images_dir]
-  cmd += ["--duration", str(args.duration), "--scale-mode", args.scale_mode, "--instances", str(args.instances)]
-  if args.display:
-    cmd += ["--display", args.display]
-  if args.display_map:
-    cmd += ["--display-map", args.display_map]
-  if args.master_control:
-    cmd.append("--master-control")
-  if args.no_master_control:
-    cmd.append("--no-master-control")
-  if args.shuffle:
-    cmd.append("--shuffle")
-  if args.watch:
-    cmd.append("--watch")
-  if args.no_recursive:
-    cmd.append("--no-recursive")
-  if args.debug:
-    cmd.append("--debug")
-  return run_command(cmd)
+def add_live_only_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--watch", action="store_true", help="Watch for new files")
+    parser.add_argument(
+        "--no-recursive",
+        action="store_true",
+        help="Disable recursive watch mode",
+    )
+    parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order")
 
 
-def handle_tile(args: argparse.Namespace) -> int:
-  cmd = [str(SCRIPTS_DIR / "img-effects.sh"), "tile", args.images_dir]
-  cmd += ["--duration", str(args.duration), "--scale-mode", args.scale_mode]
-  if args.grid:
-    cmd += ["--grid", args.grid]
-  if args.randomize:
-    cmd.append("--randomize")
-  if args.group_size:
-    cmd += ["--group-size", str(args.group_size)]
-  if args.spacing:
-    cmd += ["--spacing", str(args.spacing)]
-  if args.animate_videos:
-    cmd.append("--animate-videos")
-  if args.encoder:
-    cmd += ["--encoder", args.encoder]
-  if args.no_cache:
-    cmd.append("--no-cache")
-  if args.max_files:
-    cmd += ["--max-files", str(args.max_files)]
-  if args.debug:
-    cmd.append("--debug")
-  return run_command(cmd)
+def add_render_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--render", action="store_true", help="Render to a video instead of live playback")
+    parser.add_argument("--output", help="Output file path for render mode")
+    parser.add_argument("--resolution", default="1920x1080", help="Output resolution")
+    parser.add_argument("--fps", default="30", help="Frames per second for effect renders")
+    parser.add_argument(
+        "--img-per-sec",
+        default="60",
+        help="Images per second for plain render mode",
+    )
 
 
-def handle_render(args: argparse.Namespace) -> int:
-  cmd = [
-      str(SCRIPTS_DIR / "images-to-video.sh"),
-      args.images_dir,
-      str(args.img_per_sec),
-      args.resolution,
-      args.output,
-  ]
-  if args.play:
-    cmd.append("--play")
-    cmd += ["--scale-mode", args.scale_mode, "--instances", str(args.instances)]
-    if args.display:
-      cmd += ["--display", args.display]
-    if args.display_map:
-      cmd += ["--display-map", args.display_map]
-    if args.master_control:
-      cmd.append("--master-control")
-    if args.no_master_control:
-      cmd.append("--no-master-control")
-  if args.debug:
-    cmd.append("--debug")
-  return run_command(cmd)
+def add_effect_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--effect", choices=ALL_EFFECTS, help="Effect modifier")
+    parser.add_argument("--limit", "-l", default="5", help="Max images for video effects")
+    parser.add_argument("--grid", help="Tile grid size")
+    parser.add_argument("--spacing", help="Tile spacing in pixels")
+    parser.add_argument("--group-size", type=int, help="Randomized tile group size")
+    parser.add_argument("--randomize", action="store_true", help="Randomize tile layouts")
+    parser.add_argument(
+        "--animate-videos",
+        action="store_true",
+        help="Animate tile videos instead of stills",
+    )
+    parser.add_argument(
+        "--encoder",
+        choices=["auto", "hevc_videotoolbox", "libx265", "libx264"],
+        help="Animated tile encoder override",
+    )
+    parser.add_argument("--sound", help="Sound file for slideshow playback")
+    parser.add_argument(
+        "--sound-trim-db",
+        help="Leading silence trim threshold in dB",
+    )
+    parser.add_argument("--max-files", type=int, help="Limit discovered files")
+    parser.add_argument(
+        "--order",
+        choices=["natural", "om"],
+        help="File ordering mode",
+    )
+    parser.add_argument("--recursive", action="store_true", help="Recurse into subdirectories")
+    parser.add_argument(
+        "--random-scale",
+        action="store_true",
+        help="Randomly alternate between fit and fill",
+    )
+
+
+def add_debug_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--debug", action="store_true", help="Print backend debug info")
+
+
+def append_if_value(cmd: list[str], flag: str, value: object | None) -> None:
+    if value is None:
+        return
+    cmd.extend([flag, str(value)])
+
+
+def append_if_true(cmd: list[str], flag: str, enabled: bool) -> None:
+    if enabled:
+        cmd.append(flag)
+
+
+def validate_live_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.master_control and args.no_master_control:
+        parser.error("choose either --master-control or --no-master-control")
+
+    if not args.render and args.effect in RENDER_EFFECTS:
+        parser.error(f"--effect {args.effect} requires --render")
+
+    if args.render and args.effect in LIVE_EFFECTS:
+        parser.error(f"--effect {args.effect} is live-only and cannot be combined with --render")
+
+    if args.watch and args.render:
+        parser.error("--watch cannot be combined with --render")
+
+    if args.shuffle and args.render:
+        parser.error("--shuffle cannot be combined with --render")
+
+    if args.no_recursive and args.render:
+        parser.error("--no-recursive cannot be combined with --render")
+
+
+def build_live_backend_command(args: argparse.Namespace) -> list[str]:
+    effect = args.effect or "basic"
+    if effect == "basic":
+        cmd = [str(SCRIPTS_DIR / "slideshow.sh"), args.images_dir]
+        cmd.extend(["--duration", str(args.duration), "--scale-mode", args.scale_mode, "--instances", str(args.instances)])
+        append_if_value(cmd, "--display", args.display)
+        append_if_value(cmd, "--display-map", args.display_map)
+        append_if_true(cmd, "--master-control", args.master_control)
+        append_if_true(cmd, "--no-master-control", args.no_master_control)
+        append_if_true(cmd, "--shuffle", args.shuffle)
+        append_if_true(cmd, "--watch", args.watch)
+        append_if_true(cmd, "--no-recursive", args.no_recursive)
+        append_if_true(cmd, "--debug", args.debug)
+        return cmd
+
+    cmd = [str(SCRIPTS_DIR / "img-effects.sh"), effect, args.images_dir]
+    cmd.extend(["--duration", str(args.duration)])
+    if args.scale_mode != "stretch":
+        cmd.extend(["--scale-mode", args.scale_mode])
+    cmd.extend(["--instances", str(args.instances)])
+    append_if_value(cmd, "--display", args.display)
+    append_if_value(cmd, "--display-map", args.display_map)
+    append_if_true(cmd, "--master-control", args.master_control)
+    append_if_true(cmd, "--no-master-control", args.no_master_control)
+    append_if_true(cmd, "--debug", args.debug)
+
+    if effect == "tile":
+        append_if_value(cmd, "--grid", args.grid)
+        append_if_value(cmd, "--spacing", args.spacing)
+        append_if_value(cmd, "--group-size", args.group_size)
+        append_if_true(cmd, "--randomize", args.randomize)
+        append_if_true(cmd, "--animate-videos", args.animate_videos)
+        append_if_value(cmd, "--encoder", args.encoder)
+        append_if_value(cmd, "--sound", args.sound)
+        append_if_value(cmd, "--sound-trim-db", args.sound_trim_db)
+        append_if_value(cmd, "--max-files", args.max_files)
+        append_if_value(cmd, "--order", args.order)
+        append_if_true(cmd, "--recursive", args.recursive)
+        append_if_true(cmd, "--random-scale", args.random_scale)
+
+    return cmd
+
+
+def build_plain_render_command(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        str(SCRIPTS_DIR / "images-to-video.sh"),
+        args.images_dir,
+        str(args.img_per_sec),
+        args.resolution,
+        args.output or "flipbook.mp4",
+    ]
+    append_if_true(cmd, "--debug", args.debug)
+    return cmd
+
+
+def build_effect_render_command(args: argparse.Namespace) -> list[str]:
+    cmd = [str(SCRIPTS_DIR / "img-effects.sh"), args.effect, args.images_dir]
+    cmd.extend(["--duration", str(args.duration), "--resolution", args.resolution, "--fps", str(args.fps)])
+    append_if_value(cmd, "--output", args.output)
+    append_if_value(cmd, "--scale-mode", args.scale_mode if args.scale_mode != "stretch" else "fit")
+    append_if_value(cmd, "--limit", args.limit)
+    append_if_value(cmd, "--sound", args.sound)
+    append_if_value(cmd, "--sound-trim-db", args.sound_trim_db)
+    append_if_value(cmd, "--max-files", args.max_files)
+    append_if_value(cmd, "--order", args.order)
+    append_if_true(cmd, "--recursive", args.recursive)
+    append_if_true(cmd, "--random-scale", args.random_scale)
+    append_if_true(cmd, "--debug", args.debug)
+    return cmd
+
+
+def handle_live(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    validate_live_args(args, parser)
+
+    if args.render:
+        if args.effect:
+            return run_command(build_effect_render_command(args))
+        return run_command(build_plain_render_command(args))
+
+    return run_command(build_live_backend_command(args))
 
 
 def build_parser() -> argparse.ArgumentParser:
-  parser = argparse.ArgumentParser(
-      prog="slideshow-cli",
-      description="Experimental Python wrapper for mpv-img-tricks shell entrypoints.",
-  )
-  subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        prog="slideshow",
+        description="Unified CLI for live slideshows, effects, and renders.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-  live_parser = subparsers.add_parser("live", help="Run slideshow live mode")
-  add_common_live_args(live_parser)
-  live_parser.set_defaults(handler=handle_live)
+    live_parser = subparsers.add_parser(
+        "live",
+        help="Run a slideshow from an image directory or glob",
+        description=(
+            "Run a live slideshow by default. Add --effect to modify the live session, "
+            "or add --render to export a video."
+        ),
+    )
+    live_parser.add_argument("images_dir", help="Source image directory or glob")
 
-  tile_parser = subparsers.add_parser("tile", help="Run tiled slideshow effect")
-  tile_parser.add_argument("images_dir", help="Source image directory or glob")
-  tile_parser.add_argument("--duration", "-d", default="0.05")
-  tile_parser.add_argument("--scale-mode", default="fit", choices=["fit", "fill"])
-  tile_parser.add_argument("--grid")
-  tile_parser.add_argument("--randomize", action="store_true")
-  tile_parser.add_argument("--group-size", type=int)
-  tile_parser.add_argument("--spacing", type=int)
-  tile_parser.add_argument("--animate-videos", action="store_true")
-  tile_parser.add_argument("--encoder", choices=["auto", "hevc_videotoolbox", "libx265", "libx264"])
-  tile_parser.add_argument("--no-cache", action="store_true")
-  tile_parser.add_argument("--max-files", type=int)
-  tile_parser.add_argument("--debug", action="store_true")
-  tile_parser.set_defaults(handler=handle_tile)
+    playback = live_parser.add_argument_group("playback/display")
+    add_display_args(playback)
+    add_live_only_args(playback)
 
-  render_parser = subparsers.add_parser("render", help="Render images to video")
-  render_parser.add_argument("images_dir", help="Source image directory")
-  render_parser.add_argument("--img-per-sec", default="60")
-  render_parser.add_argument("--resolution", default="1920x1080")
-  render_parser.add_argument("--output", default="flipbook.mp4")
-  render_parser.add_argument("--play", action="store_true")
-  render_parser.add_argument("--scale-mode", default="fit", choices=["fit", "fill", "stretch"])
-  render_parser.add_argument("--instances", "-n", default="1")
-  render_parser.add_argument("--display")
-  render_parser.add_argument("--display-map")
-  render_parser.add_argument("--master-control", action="store_true")
-  render_parser.add_argument("--no-master-control", action="store_true")
-  render_parser.add_argument("--debug", action="store_true")
-  render_parser.set_defaults(handler=handle_render)
+    render = live_parser.add_argument_group("render/video")
+    add_render_args(render)
 
-  return parser
+    effects = live_parser.add_argument_group("effect-specific")
+    add_effect_args(effects)
+
+    diagnostics = live_parser.add_argument_group("diagnostics")
+    add_debug_args(diagnostics)
+
+    live_parser.epilog = "\n".join(
+        [
+            "Examples:",
+            "  slideshow live ~/pics",
+            "  slideshow live ~/pics --effect chaos --duration 0.02",
+            "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
+            "  slideshow live ~/pics --render --output out.mp4",
+            "  slideshow live ~/pics --render --effect glitch --output glitch.mp4",
+        ]
+    )
+    live_parser.set_defaults(handler=handle_live, parser=live_parser)
+
+    return parser
 
 
 def main() -> int:
-  parser = build_parser()
-  args = parser.parse_args()
-  return args.handler(args)
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.handler(args, args.parser)
 
 
 if __name__ == "__main__":
-  sys.exit(main())
+    sys.exit(main())

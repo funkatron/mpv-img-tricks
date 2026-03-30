@@ -71,6 +71,10 @@ assert_contains "$MPV_LOG" "--no-keepaspect"
 
 # Slideshow parser order checks.
 : > "$MPV_LOG"
+bash "$SLIDESHOW_SCRIPT" "$MEDIA_DIR" >/dev/null
+assert_contains "$MPV_LOG" "--image-display-duration=2.0"
+
+: > "$MPV_LOG"
 bash "$SLIDESHOW_SCRIPT" "$MEDIA_DIR" --scale-mode fill --duration 0.01 >/dev/null
 assert_contains "$MPV_LOG" "--panscan=1.0"
 

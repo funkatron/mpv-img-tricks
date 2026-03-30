@@ -6,7 +6,10 @@ set -euo pipefail
 # - normalized mpv flag construction
 # - optional split-playlist multi-instance launching
 
-DURATION="0.001"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/constants.sh"
+
+DURATION="${DEFAULT_SLIDESHOW_DURATION_SECONDS}"
 PLAYLIST_FILE=""
 FULLSCREEN="true"
 SHUFFLE="false"
@@ -31,12 +34,12 @@ declare -a INSTANCE_PLAYLISTS=()
 BRIDGE_PID=""
 
 usage() {
-  cat <<'EOF'
+  cat <<EOF
 Usage: mpv-pipeline.sh --playlist FILE [options]
 
 Options:
   --playlist FILE                 Playlist file path (required)
-  --duration SECONDS              image-display-duration value
+  --duration SECONDS              image-display-duration value (default: ${DEFAULT_SLIDESHOW_DURATION_SECONDS})
   --fullscreen yes|no             Fullscreen toggle (default: yes)
   --shuffle yes|no                Shuffle toggle
   --loop-mode MODE                none|file|playlist (default: playlist)

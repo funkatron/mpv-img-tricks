@@ -2,24 +2,29 @@
 
 **⚠️ PRE-ALPHA SOFTWARE** - Experimental software in early development. Use at your own risk!
 
-Image slideshow and effects system for creating rapid-fire slideshows and video effects from image collections.
+Image slideshow and effects system for building live slideshows and rendered videos from image collections.
 
-Primary CLI: `slideshow`.  
-Compatibility entrypoints: `img-effects`, `images-to-video`.
+Primary command: `./slideshow live`
+
+This is a personal utility project. Breaking CLI changes are acceptable when they simplify the workflow.
+
+**Defaults:** Omitted `--duration` uses **2.0** seconds per image (Python CLI default and shell backends via [`scripts/lib/constants.sh`](scripts/lib/constants.sh)). Use `--duration 0.02` (or lower) for rapid cycling.
+
+**Advanced:** Set `MPV_IMG_TRICKS_SCRIPTS_DIR` to a directory containing `slideshow.sh`, `img-effects.sh`, and `images-to-video.sh` to override the normal `scripts/` resolution (used by unit tests and custom layouts).
 
 ## Installation
 
-The scripts are available as global commands after installation. Symlinks have been created in `~/bin`:
+No installer is required. Run the unified CLI directly from the repo root:
 
-- `slideshow` - Image slideshow viewer
-- `img-effects` - Effects and slideshow script
-- `images-to-video` - Simple image-to-video converter
+- `./slideshow live` - Live slideshow entrypoint
 
-You can also use them directly from the scripts directory:
+Current shell scripts remain as internal backends for the Python CLI and are no longer the documented user interface.
+
+Examples:
 ```bash
-scripts/slideshow.sh ~/pics
-scripts/img-effects.sh basic ~/pics
-scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
+./slideshow live ~/pics
+./slideshow live ~/pics --effect chaos --duration 0.02
+./slideshow live ~/pics --render --output out.mp4
 ```
 
 ## Quick Start
@@ -27,74 +32,63 @@ scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
 ### Simple Slideshows
 
 ```bash
-# Basic slideshow (fast image cycling)
-img-effects basic ~/pics
+# Basic slideshow
+./slideshow live ~/pics
 
 # Chaos mode (shuffled, infinite loop)
-img-effects chaos ~/pics --duration 0.02
+./slideshow live ~/pics --effect chaos --duration 0.02
 
 # Slideshow with scaling options
-slideshow ~/pics
+./slideshow live ~/pics --scale-mode fill
 ```
 
 ### Video Effects
 
 ```bash
-# Ken Burns effect (smooth zoom/pan)
-img-effects ken-burns ~/pics --duration 3 --output slideshow.mp4
+# Ken Burns effect
+./slideshow live ~/pics --render --effect ken-burns --duration 3 --output slideshow.mp4
 
 # Visual effects (glitch, acid, reality, etc.)
-img-effects glitch ~/pics --output glitch.mp4
-img-effects acid ~/pics --output acid-trip.mp4
-img-effects reality ~/pics --output reality-break.mp4
+./slideshow live ~/pics --render --effect glitch --output glitch.mp4
+./slideshow live ~/pics --render --effect acid --output acid-trip.mp4
+./slideshow live ~/pics --render --effect reality --output reality-break.mp4
 
 # Simple video from images
-images-to-video ~/pics 60 1920x1080 out.mp4
+./slideshow live ~/pics --render --img-per-sec 60 --resolution 1920x1080 --output out.mp4
 ```
 
 ## Available Effects
 
 ### Live Slideshows (mpv)
-- **basic** - Simple fast slideshow
-- **chaos** - Shuffled rapid-fire with infinite loop
-- **tile** - Live tiled grid slideshow (perfect for ultrawide screens)
+- **basic** - Sequential slideshow playback
+- **chaos** - Shuffled slideshow playback with loop enabled
+- **tile** - Live tiled grid slideshow
 
 ### Video Effects (ffmpeg)
 - **ken-burns** - Smooth zoom/pan transitions
 - **crossfade** - Smooth blending between images
 - **glitch** - Data corruption and noise effects
-- **acid** - Color shifting and morphing
+- **acid** - Color shift effect
 - **reality** - Distortion and transformation effects
 - **kaleido** - Kaleidoscope patterns
-- **matrix** - Digital rain-style effects
-- **liquid** - Liquid distortion morphing
+- **matrix** - Matrix effect
+- **liquid** - Liquid distortion effect
 
 ## Scripts
 
-- **scripts/slideshow.sh** - Primary slideshow command with scaling and multi-instance options
-- **scripts/img-effects.sh** - Compatibility entrypoint for effects/slideshow modes
-- **scripts/images-to-video.sh** - Compatibility entrypoint for image-to-video rendering
-- **scripts/mpv-pipeline.sh** - Canonical mpv runtime pipeline shared by entrypoints
+- **slideshow** - Unified CLI entrypoint
+- **scripts/slideshow.sh** - Internal backend for plain live slideshow behavior
+- **scripts/img-effects.sh** - Internal backend for effect execution
+- **scripts/images-to-video.sh** - Internal backend for plain image-to-video rendering
+- **scripts/mpv-pipeline.sh** - Canonical mpv runtime pipeline shared by scripts
 - **mpv-scripts/blast.lua** - mpv script for live speed control and image management
-
-## Experimental Python CLI (Spike)
-
-An opt-in Python wrapper is available at `python/slideshow_cli.py`. It delegates to existing shell entrypoints and does not replace them.
-
-Examples:
-
-```bash
-python3 python/slideshow_cli.py live ~/pics --scale-mode fill
-python3 python/slideshow_cli.py tile "~/videos/*.mov" --randomize --animate-videos
-python3 python/slideshow_cli.py render ~/pics --img-per-sec 60 --output out.mp4 --play
-```
 
 ## Live Controls (with `blast.lua`)
 
 When using mpv with `--script=mpv-scripts/blast.lua`, you can control playback:
 
 **Playback Controls:**
-- **Alt+1** - Very fast (~1000 images/sec, 0.001s)
+- **Alt+1** - Set duration to 0.001s (~1000 images/sec)
 - **Alt+2** - Fast (~20 images/sec, 0.05s)
 - **Alt+3** - Medium (~10 images/sec, 0.1s)
 - **Alt+4** - Normal (1 image/sec, 1.0s)
@@ -122,199 +116,165 @@ When using mpv with `--script=mpv-scripts/blast.lua`, you can control playback:
 
 **Image Management:**
 - **m** - Flag current image as "keep" (writes to `keep.txt` in the same directory)
-- **Shift+Delete** or **Delete** - Move current image to trash and skip to next
+- **Shift+Delete** - Move current image to trash and skip to next
 
 **Note:** Standard mpv keys (f for fullscreen, arrow keys, space for pause, etc.) work as usual.
 
 ## Options
 
-### img-effects (compatibility entrypoint)
+### slideshow live
 
 ```bash
-img-effects <effect> <image_dir> [options]
-# or: scripts/img-effects.sh <effect> <image_dir> [options]
+./slideshow live <images_dir_or_glob> [options]
 
-Options:
-  --duration, -d SECONDS    Duration per image (default: 0.05)
-  --output, -o FILE          Output file for video effects
-  --resolution, -r SIZE      Output resolution (default: 1920x1080)
-  --fps, -f FPS             Frames per second (default: 30)
-  --scale-mode MODE         'fit' or 'fill' (default: fit)
-  --fit                     Alias for --scale-mode fit
-  --fill                    Alias for --scale-mode fill
-  --limit, -l COUNT         Max images for video effects (default: 5)
-  --instances, -n COUNT     mpv instances for live effects (basic/chaos)
-  --display INDEX           Target display for single instance/master
-  --display-map CSV         Per-instance display mapping (e.g. 0,1,2)
-  --master-control          Enable master->follower sync for multi-instance
-  --animate-videos          In tile mode, render animated .mp4 grid segments
-                            (prefers HEVC VideoToolbox; falls back if unavailable)
-  --encoder NAME            Animated tile encoder override:
-                            auto|hevc_videotoolbox|libx265|libx264
-```
-
-### slideshow (primary command)
-
-```bash
-slideshow [options] <image_dir>
-# or: scripts/slideshow.sh [options] <image_dir>
-
-Scaling Options:
-  --scale-mode MODE          fit|fill|stretch (default: fit)
-                            fit=letterbox, fill=cover/crop, stretch=legacy stretch
-  --no-upscale-smaller       Don't upscale smaller images
-  --no-downscale-larger      Don't downscale larger images
-  --duration SECONDS         Duration per image (default: 0.001)
-
-Watch Mode (Live File Monitoring):
-  --watch, -w                Watch for new images and add them to playlist
-  --no-recursive              Don't watch subdirectories (only with --watch)
-
-Multi-instance / Display:
-  --instances, -n COUNT      Launch COUNT mpv instances (split playlists)
+Playback/display:
+  --duration, -d SECONDS     Duration per image
+  --scale-mode MODE          fit|fill|stretch
+  --instances, -n COUNT      Number of mpv instances
   --display INDEX            Target display for single instance/master
   --display-map CSV          Per-instance display mapping (e.g. 0,1)
-  --master-control           Force master->follower sync in multi-instance mode
-  --no-master-control        Disable sync in multi-instance mode
+  --master-control           Force master->follower sync
+  --no-master-control        Disable master->follower sync
+  --watch                    Watch for new images and add them to playlist
+  --no-recursive             Disable recursive watch mode
+  --shuffle                  Shuffle playlist order
+
+Render/video:
+  --render                   Render a video instead of launching live playback
+  --output FILE              Output path for render mode
+  --resolution SIZE          Output resolution (default: 1920x1080)
+  --fps FPS                  Frames per second for effect renders
+  --img-per-sec COUNT        Images per second for plain render mode
+
+Effect-specific:
+  --effect NAME              basic|chaos|tile|ken-burns|crossfade|glitch|acid|reality|kaleido|matrix|liquid
+  --limit, -l COUNT          Max images for video effects
+  --grid SIZE                Tile grid size
+  --spacing PIXELS           Tile spacing in pixels
+  --group-size COUNT         Number of images per randomized tile group
+  --randomize                Randomize tile layouts
+  --animate-videos           Animate video tiles instead of using still composites
+  --encoder NAME             auto|hevc_videotoolbox|libx265|libx264
+  --sound FILE               Play sound file during slideshow playback
+  --sound-trim-db DB         Leading silence trim threshold in dB
+  --max-files COUNT          Limit discovered files
+  --order MODE               natural|om
+  --recursive                Recurse into subdirectories
+  --random-scale             Randomly alternate between fill and fit scaling
+
+Diagnostics:
+  --debug                    Print backend debug info
+
+# full, current option list:
+./slideshow live --help
 ```
 
 **Watch Mode**: When enabled with `--watch`, the slideshow monitors the directory for new image files. When a new image is detected, it's automatically added to the playlist as the next item and the slideshow immediately jumps to it. Requires `fswatch` (install with `brew install fswatch` on macOS).
 
-### images-to-video
-
-```bash
-images-to-video <image_dir> [img_per_sec] [resolution] [output]
-# Example: images-to-video ~/pics 60 1920x1080 out.mp4
-# or: scripts/images-to-video.sh ~/pics 60 1920x1080 out.mp4
-
-# Optional preview through canonical mpv pipeline
-images-to-video ~/pics 60 1920x1080 out.mp4 --play --instances 2 --display-map 0,1 --scale-mode fill
-```
-
-Preview options for `--play` mode:
-- `--scale-mode MODE` where `MODE` is `fit|fill|stretch`
-- `--instances`, `--display`, `--display-map`, `--master-control`
+Current limitation: `--watch` currently supports only a single instance (`--instances 1`).
 
 ## More Examples
 
 ```bash
 # Custom resolution and duration
-img-effects glitch ~/pics --duration 0.3 --resolution 1280x720 --output glitch.mp4
+./slideshow live ~/pics --render --effect glitch --duration 0.3 --resolution 1280x720 --output glitch.mp4
 
 # High frame rate
-img-effects reality ~/pics --fps 60 --output physics-break.mp4
+./slideshow live ~/pics --render --effect reality --fps 60 --output physics-break.mp4
 
 # Process more images
-img-effects acid ~/pics --limit 20 --output trip.mp4
+./slideshow live ~/pics --render --effect acid --limit 20 --output trip.mp4
 
-# Fast slideshow
-slideshow ~/pics --duration 0.001
+# Short duration slideshow
+./slideshow live ~/pics --duration 0.2
 
 # Live slideshow (watches for new images)
-slideshow ~/pics --watch
+./slideshow live ~/pics --watch
 
-# Option-first invocation style also works
-slideshow --scale-mode fill ~/pics
+# Option-first invocation
+./slideshow live ~/pics --scale-mode fill
 
 # Live slideshow (non-recursive, current directory only)
-slideshow ~/pics --watch --no-recursive
+./slideshow live ~/pics --watch --no-recursive
 
 # Split slideshow across two displays with synchronized controls
-slideshow ~/pics --instances 2 --display-map 0,1 --master-control
+./slideshow live ~/pics --instances 2 --display-map 0,1 --master-control
 
 # Simple video
-images-to-video ~/pics 30 1920x1080 slideshow.mp4
+./slideshow live ~/pics --render --img-per-sec 30 --resolution 1920x1080 --output slideshow.mp4
 
-# Render video and then preview source images via canonical pipeline
-images-to-video ~/pics 30 1920x1080 slideshow.mp4 --play --instances 2
-# Matrix-style effects
-scripts/img-effects.sh matrix ~/pics --output matrix-vision.mp4
+# Matrix effect
+./slideshow live ~/pics --render --effect matrix --output matrix-vision.mp4
 
 # Tiled slideshow examples
-scripts/img-effects.sh tile ~/pics --grid 2x2 --duration 3
-scripts/img-effects.sh tile ~/pics --grid 4x1 --duration 1.5
-scripts/img-effects.sh tile ~/pics --grid 3x2 --duration 2.5
+./slideshow live ~/pics --effect tile --grid 2x2 --duration 3
+./slideshow live ~/pics --effect tile --grid 4x1 --duration 1.5
+./slideshow live ~/pics --effect tile --grid 3x2 --duration 2.5
 
 # Randomized tiling examples
-scripts/img-effects.sh tile ~/pics --randomize --group-size 3 --duration 2
-scripts/img-effects.sh tile ~/pics --randomize --group-size 5 --duration 4
-scripts/img-effects.sh tile "~/videos/*.mov" --randomize --group-size 4 --duration 1.5 --animate-videos
-scripts/img-effects.sh tile "~/videos/*.mov" --randomize --group-size 4 --duration 1.5 --animate-videos --encoder hevc_videotoolbox
+./slideshow live ~/pics --effect tile --randomize --group-size 3 --duration 2
+./slideshow live ~/pics --effect tile --randomize --group-size 5 --duration 4
+./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos
+./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos --encoder hevc_videotoolbox
 ```
 
 ## Tile Effect Details
 
-The **tile** effect creates a live slideshow that displays multiple images simultaneously in a grid layout. It's optimized for ultrawide screens and uses mpv's built-in `hstack` and `vstack` filters for efficient rendering.
+The **tile** effect creates a live slideshow that displays multiple images simultaneously in a grid layout. It uses mpv's `hstack` and `vstack` filters.
 
 ### Features:
-- **Automatic screen detection** - Detects your screen resolution for optimal tiling
-- **Ultrawide optimized** - Perfect for 3440x1440, 5120x1440, and other ultrawide displays
+- **Automatic screen detection** - Detects your screen resolution on macOS/Linux
+- **Ultrawide support** - Works with ultrawide resolutions (for example 3440x1440, 5120x1440)
 - **Live slideshow** - Images advance through the grid in real-time
 - **Animated video tiles** - Optional moving video playback inside each tile (`--animate-videos`)
 - **Flexible grid sizes** - Support for any grid configuration (1x3, 2x2, 3x2, etc.)
 - **Randomized layouts** - Different grid layouts for each group of images
-- **Group-based tiling** - Process images in customizable groups (3-5 images per group)
+- **Group-based tiling** - Process images in customizable groups (`--group-size` as any positive integer)
 
 ### Grid Options:
-- **1x3** - Horizontal strip (3 images across, 1 row)
-- **2x2** - Classic 4-image grid
-- **3x1** - Wide horizontal strip (3 images across)
-- **3x2** - 6-image grid (3 columns, 2 rows)
-- **4x1** - Ultra-wide strip (4 images across)
+- **1x3** - 3 columns x 1 row
+- **2x2** - 2 columns x 2 rows
+- **3x1** - 3 columns x 1 row
+- **3x2** - 3 columns x 2 rows
+- **4x1** - 4 columns x 1 row
 
 ### Examples:
 ```bash
-# Horizontal strip for ultrawide
-scripts/img-effects.sh tile ~/pics --grid 3x1 --duration 2
+# 3x1 grid
+./slideshow live ~/pics --effect tile --grid 3x1 --duration 2
 
-# Classic 4-image grid
-scripts/img-effects.sh tile ~/pics --grid 2x2 --duration 3
+# 2x2 grid
+./slideshow live ~/pics --effect tile --grid 2x2 --duration 3
 
-# Wide 6-image layout
-scripts/img-effects.sh tile ~/pics --grid 3x2 --duration 2.5
+# 3x2 grid
+./slideshow live ~/pics --effect tile --grid 3x2 --duration 2.5
 
-# Ultra-wide strip
-scripts/img-effects.sh tile ~/pics --grid 4x1 --duration 1.5
+# 4x1 grid
+./slideshow live ~/pics --effect tile --grid 4x1 --duration 1.5
 
 # Randomized tiling with different layouts per group
-scripts/img-effects.sh tile ~/pics --randomize --group-size 4 --duration 3
+./slideshow live ~/pics --effect tile --randomize --group-size 4 --duration 3
 
 # Small groups with random layouts
-scripts/img-effects.sh tile ~/pics --randomize --group-size 3 --duration 2
+./slideshow live ~/pics --effect tile --randomize --group-size 3 --duration 2
 
 # Animated MOV tiles (true motion inside each grid cell)
-scripts/img-effects.sh tile "~/videos/*.mov" --randomize --group-size 4 --duration 1.2 --animate-videos
+./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.2 --animate-videos
 ```
 
 ### Randomized Tiling:
-When using `--randomize`, each group of images gets a random grid layout from:
-- **1x1** - Single image
-- **1x2** - Vertical strip (2 images)
-- **2x1** - Horizontal strip (2 images)
-- **1x3** - Vertical strip (3 images)
-- **3x1** - Horizontal strip (3 images)
-- **2x2** - Classic 4-image grid
-- **1x4** - Vertical strip (4 images)
-- **4x1** - Horizontal strip (4 images)
-- **2x3** - 6-image grid (2 columns, 3 rows)
-- **3x2** - 6-image grid (3 columns, 2 rows)
+When using `--randomize`, each group gets a random rectangular grid selected from a dynamic layout pool where `cols * rows <= group-size`.
+For example, with `--group-size 4`, layouts include combinations like `1x1`, `2x1`, `1x2`, `2x2`, `4x1`, and `1x4`.
 
 The tile effect automatically:
-- Detects your screen resolution using `xrandr`
+- Detects your screen resolution using `system_profiler` (macOS) or `xrandr` (Linux)
 - Calculates optimal tile sizes for your display
 - Uses mpv's efficient `hstack`/`vstack` filters
-- Creates a seamless slideshow experience
+- Advances groups continuously as a slideshow
 
-## Scale Mode Migration
+## Scale Modes (Current)
 
-`slideshow --scale-mode fill` now means cover/crop with aspect ratio preserved.  
-If you previously used `fill` to force stretching, switch to:
-
-```bash
-slideshow ~/pics --scale-mode stretch
-```
-
-Scale mode semantics:
+Scale mode semantics for current scripts:
 - `fit` = contain/letterbox (AR preserved)
 - `fill` = cover/crop (AR preserved)
 - `stretch` = fill window without preserving AR
@@ -329,14 +289,13 @@ Run local unit tests during development:
 
 ## Future Plans
 
-This project is currently implemented in Bash shell scripts for rapid prototyping. Future development plans include:
+Migration sequence:
 
-- **Python Rewrite**: Rewrite in Python for better maintainability and cross-platform compatibility
-- **Enhanced Effects**: More sophisticated visual effects using libraries like OpenCV and PIL
-- **Real-time Processing**: Live effects processing without pre-rendering
-- **GUI Interface**: Optional graphical interface for effect configuration
-- **Plugin System**: Modular architecture for custom effects
-- **Performance Optimization**: GPU acceleration and multi-threading support
+- **Phase 1 (Unified CLI)**: Land `slideshow live` as the primary interface while keeping shell scripts as internal execution backends.
+- **Phase 2 (Runtime Parity)**: Port core runtime orchestration (playlist discovery, mpv/ffmpeg invocation, multi-instance controls, watch mode plumbing) to Python.
+- **Phase 3 (Behavior Cleanup)**: Simplify/normalize flags during the Python move where complexity is not useful.
+- **Phase 4 (Testing Expansion)**: Add smoke/integration checks for watch mode and multi-instance behavior on the Python path.
+- **Phase 5 (Watch Mode Improvement)**: Add best-effort multi-instance watch routing to instance 1 (followers may not mirror new files).
 
 ## Warning
 Some effects may cause seizures. Use responsibly!

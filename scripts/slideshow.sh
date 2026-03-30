@@ -14,9 +14,10 @@ source "${SCRIPT_DIR}/lib/path.sh"
 source "${SCRIPT_DIR}/lib/discovery.sh"
 source "${SCRIPT_DIR}/lib/validate.sh"
 source "${SCRIPT_DIR}/lib/pipeline.sh"
+source "${SCRIPT_DIR}/lib/constants.sh"
 
 # Default values
-DURATION="0.001"
+DURATION="${DEFAULT_SLIDESHOW_DURATION_SECONDS}"
 DIR=""
 UPSCALE_SMALLER="true"
 SCALE_MODE="fit"  # fit|fill|stretch
@@ -125,7 +126,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --no-downscale-larger      Don't downscale larger images"
       echo ""
       echo "Other Options:"
-      echo "  --duration, -d SECONDS    Duration per image (default: 0.001)"
+      echo "  --duration, -d SECONDS    Duration per image (default: ${DEFAULT_SLIDESHOW_DURATION_SECONDS})"
       echo "  --watch, -w               Watch for new images and add them to playlist"
       echo "  --no-recursive            Don't watch subdirectories (only with --watch)"
       echo "  --shuffle, -S             Shuffle/randomize the playlist"
