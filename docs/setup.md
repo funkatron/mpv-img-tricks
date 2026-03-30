@@ -33,8 +33,34 @@ That creates `.venv/` and installs this project in **editable** mode (see `uv.lo
 | `uv run slideshow live …` | Same entrypoint; uses the project environment. |
 | `uv run python -m mpv_img_tricks live …` | Module invocation; same behavior. |
 | `.venv/bin/slideshow live …` | Works after `uv sync` **without** typing `uv` each time (still need the venv). |
+| `slideshow live …` (on `PATH`) | After you symlink or add `.venv/bin` to `PATH` — see below. |
 
 **Package names:** PyPI-style name is `mpv-img-tricks`; Python import is `mpv_img_tricks`.
+
+### Put `slideshow` on your `PATH`
+
+After `uv sync`, the console script is **`.venv/bin/slideshow`**. Common options:
+
+1. **Symlink** into a directory you already put on `PATH` (for example `~/bin`):
+
+   ```bash
+   mkdir -p ~/bin
+   ln -sf /absolute/path/to/mpv-img-tricks/.venv/bin/slideshow ~/bin/slideshow
+   ```
+
+   Use the **real absolute path** to your clone. In `~/.zshrc` (or your shell config), ensure `~/bin` is on `PATH`, e.g. `export PATH="$HOME/bin:$PATH"`.
+
+   If you remove the venv (`rm -rf .venv`) or move the repo, recreate the symlink or point it at the new `.venv/bin/slideshow`.
+
+2. **Prefix `PATH`** with `.venv/bin` for this project only, e.g. in `~/.zshrc`:
+
+   ```bash
+   export PATH="/absolute/path/to/mpv-img-tricks/.venv/bin:$PATH"
+   ```
+
+3. **direnv** in the repo: `export PATH="$PWD/.venv/bin:$PATH"` in `.envrc` so `slideshow` is available whenever you `cd` into the checkout.
+
+Prefer **`.venv/bin/slideshow`** over adding the repo-root `./slideshow` script to `PATH`: the repo helper shells out to `uv run` and still needs `uv` on `PATH`; the venv binary does not.
 
 ## Repository layout (high level)
 

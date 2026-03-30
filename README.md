@@ -37,6 +37,8 @@ That creates `.venv/` and installs the **`mpv-img-tricks`** package in editable 
 | `uv run python -m mpv_img_tricks live …` | Module entry (`python -m mpv_img_tricks`). |
 | `.venv/bin/slideshow live …` | After `uv sync`, without needing `uv` on the shell line. |
 
+To use the bare command `slideshow` from anywhere, put `.venv/bin` on your `PATH` or symlink `.venv/bin/slideshow` into e.g. `~/bin` — see [docs/setup.md](docs/setup.md#put-slideshow-on-your-path).
+
 **Library use:** `from mpv_img_tricks import get_scripts_dir, get_repo_root, main` or `from mpv_img_tricks.cli import main` for the same entrypoint the `slideshow` console script calls.
 
 **Environment variables** (full table in [docs/setup.md](docs/setup.md)):
