@@ -1,17 +1,6 @@
-#!/usr/bin/env python3
-"""Repository-local launcher for the unified slideshow CLI."""
-
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-
-REPO_ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(REPO_ROOT / "python"))
-
-from slideshow_cli import main
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+#!/usr/bin/env bash
+# Repo-local launcher: same as `uv run slideshow` from this directory.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT" || exit 1
+exec uv run slideshow "$@"

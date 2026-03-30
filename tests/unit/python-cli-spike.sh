@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CLI_PATH="${ROOT_DIR}/slideshow"
+
+slideshow() {
+  (cd "$ROOT_DIR" && uv run slideshow "$@")
+}
 
 fail() {
   echo "TEST FAILED: $1"
@@ -51,33 +54,33 @@ chmod +x "${BACKEND_DIR}/slideshow.sh" "${BACKEND_DIR}/img-effects.sh" "${BACKEN
 export BACKEND_LOG="${LOG_FILE}"
 export MPV_IMG_TRICKS_SCRIPTS_DIR="${BACKEND_DIR}"
 
-python3 "$CLI_PATH" --help >/dev/null
-python3 "$CLI_PATH" live --help >"${WORK_DIR}/help.txt"
+slideshow --help >/dev/null
+slideshow live --help >"${WORK_DIR}/help.txt"
 assert_contains "${WORK_DIR}/help.txt" "playback/display"
 assert_contains "${WORK_DIR}/help.txt" "render/video"
 assert_contains "${WORK_DIR}/help.txt" "effect-specific"
 
 : > "$LOG_FILE"
-python3 "$CLI_PATH" live "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
+slideshow live "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
 assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
 
 : > "$LOG_FILE"
-python3 "$CLI_PATH" live "$MEDIA_DIR" --effect chaos --duration 0.01 >/dev/null
+slideshow live "$MEDIA_DIR" --effect chaos --duration 0.01 >/dev/null
 assert_contains "$LOG_FILE" "img-effects.sh chaos ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
 
 : > "$LOG_FILE"
-python3 "$CLI_PATH" live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --randomize --duration 0.01 >/dev/null
+slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --randomize --duration 0.01 >/dev/null
 assert_contains "$LOG_FILE" "img-effects.sh tile ${MEDIA_DIR}/*.mov --duration 0.01 --scale-mode fit --instances 1 --grid 2x2 --randomize"
 
 : > "$LOG_FILE"
-python3 "$CLI_PATH" live "$MEDIA_DIR" --render --output out.mp4 >/dev/null
+slideshow live "$MEDIA_DIR" --render --output out.mp4 >/dev/null
 assert_contains "$LOG_FILE" "images-to-video.sh ${MEDIA_DIR} 60 1920x1080 out.mp4"
 
 : > "$LOG_FILE"
-python3 "$CLI_PATH" live "$MEDIA_DIR" --render --effect glitch --output glitch.mp4 --duration 0.3 >/dev/null
+slideshow live "$MEDIA_DIR" --render --effect glitch --output glitch.mp4 --duration 0.3 >/dev/null
 assert_contains "$LOG_FILE" "img-effects.sh glitch ${MEDIA_DIR} --duration 0.3 --resolution 1920x1080 --fps 30 --output glitch.mp4 --scale-mode fit --limit 5"
 
-if python3 "$CLI_PATH" live "$MEDIA_DIR" --effect glitch >/dev/null 2>"${WORK_DIR}/err.log"; then
+if slideshow live "$MEDIA_DIR" --effect glitch >/dev/null 2>"${WORK_DIR}/err.log"; then
   fail "expected glitch without --render to fail"
 fi
 assert_contains "${WORK_DIR}/err.log" "requires --render"

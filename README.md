@@ -14,11 +14,19 @@ This is a personal utility project. Breaking CLI changes are acceptable when the
 
 ## Installation
 
-No installer is required. Run the unified CLI from the repo root:
+This repo is a small **uv** project (`pyproject.toml`). From the checkout:
 
-- `./slideshow live` — primary interface
+```bash
+uv sync
+```
 
-Equivalent: `python python/slideshow_cli.py live …` (same behavior as `./slideshow`).
+Then use any of:
+
+- `./slideshow live …` — thin wrapper around `uv run slideshow`
+- `uv run slideshow live …` — console script from the project environment
+- `uv run python -m mpv_img_tricks live …` — module entry
+
+As a library, import helpers such as `mpv_img_tricks.get_scripts_dir` / `mpv_img_tricks.get_repo_root`, or `from mpv_img_tricks.cli import main` for the same CLI `main()` used by the `slideshow` command.
 
 Examples:
 ```bash
@@ -76,7 +84,9 @@ Examples:
 
 ## Implementation note
 
-Orchestration is implemented in Bash modules under `scripts/` and is invoked only through `./slideshow` (or `python/slideshow_cli.py`). Live key bindings come from [`mpv-scripts/blast.lua`](mpv-scripts/blast.lua). You do not need to run anything under `scripts/` directly.
+Orchestration is implemented in Bash modules under `scripts/` and is invoked through the Python package `mpv_img_tricks` (`slideshow` / `python -m mpv_img_tricks`). Live key bindings come from [`mpv-scripts/blast.lua`](mpv-scripts/blast.lua). You do not need to run anything under `scripts/` directly.
+
+If the checkout root cannot be found (for example imports from an unexpected working directory), set **`MPV_IMG_TRICKS_ROOT`** to the repository root. **`MPV_IMG_TRICKS_SCRIPTS_DIR`** still overrides the `scripts/` path directly.
 
 ## Live Controls (with `blast.lua`)
 
@@ -276,7 +286,7 @@ Scale mode semantics for the slideshow CLI:
 
 ## Development Testing
 
-Run local unit tests during development:
+Unit tests expect **`uv`** on your `PATH` and run `uv sync` before executing checks.
 
 ```bash
 ./tests/run-unit.sh

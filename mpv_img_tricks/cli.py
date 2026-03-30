@@ -1,21 +1,17 @@
-#!/usr/bin/env python3
 """Unified CLI for mpv-img-tricks.
 
-The Python layer owns argument parsing and delegates execution to the existing
-shell backends so behavior stays aligned while the interface is consolidated.
+Argument parsing lives here; execution delegates to Bash backends under ``scripts/``.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
-from pathlib import Path
+from argparse import Namespace
 
+from mpv_img_tricks.paths import get_scripts_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_DIR = Path(os.environ.get("MPV_IMG_TRICKS_SCRIPTS_DIR", REPO_ROOT / "scripts"))
 LIVE_EFFECTS = {"basic", "chaos", "tile"}
 RENDER_EFFECTS = {
     "glitch",
@@ -126,7 +122,7 @@ def append_if_true(cmd: list[str], flag: str, enabled: bool) -> None:
         cmd.append(flag)
 
 
-def validate_live_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None:
     if args.master_control and args.no_master_control:
         parser.error("choose either --master-control or --no-master-control")
 
@@ -146,11 +142,14 @@ def validate_live_args(args: argparse.Namespace, parser: argparse.ArgumentParser
         parser.error("--no-recursive cannot be combined with --render")
 
 
-def build_live_backend_command(args: argparse.Namespace) -> list[str]:
+def build_live_backend_command(args: Namespace) -> list[str]:
+    scripts = get_scripts_dir()
     effect = args.effect or "basic"
     if effect == "basic":
-        cmd = [str(SCRIPTS_DIR / "slideshow.sh"), args.images_dir]
-        cmd.extend(["--duration", str(args.duration), "--scale-mode", args.scale_mode, "--instances", str(args.instances)])
+        cmd = [str(scripts / "slideshow.sh"), args.images_dir]
+        cmd.extend(
+            ["--duration", str(args.duration), "--scale-mode", args.scale_mode, "--instances", str(args.instances)]
+        )
         append_if_value(cmd, "--display", args.display)
         append_if_value(cmd, "--display-map", args.display_map)
         append_if_true(cmd, "--master-control", args.master_control)
@@ -161,7 +160,7 @@ def build_live_backend_command(args: argparse.Namespace) -> list[str]:
         append_if_true(cmd, "--debug", args.debug)
         return cmd
 
-    cmd = [str(SCRIPTS_DIR / "img-effects.sh"), effect, args.images_dir]
+    cmd = [str(scripts / "img-effects.sh"), effect, args.images_dir]
     cmd.extend(["--duration", str(args.duration)])
     if args.scale_mode != "stretch":
         cmd.extend(["--scale-mode", args.scale_mode])
@@ -189,9 +188,10 @@ def build_live_backend_command(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
-def build_plain_render_command(args: argparse.Namespace) -> list[str]:
+def build_plain_render_command(args: Namespace) -> list[str]:
+    scripts = get_scripts_dir()
     cmd = [
-        str(SCRIPTS_DIR / "images-to-video.sh"),
+        str(scripts / "images-to-video.sh"),
         args.images_dir,
         str(args.img_per_sec),
         args.resolution,
@@ -201,8 +201,9 @@ def build_plain_render_command(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
-def build_effect_render_command(args: argparse.Namespace) -> list[str]:
-    cmd = [str(SCRIPTS_DIR / "img-effects.sh"), args.effect, args.images_dir]
+def build_effect_render_command(args: Namespace) -> list[str]:
+    scripts = get_scripts_dir()
+    cmd = [str(scripts / "img-effects.sh"), args.effect, args.images_dir]
     cmd.extend(["--duration", str(args.duration), "--resolution", args.resolution, "--fps", str(args.fps)])
     append_if_value(cmd, "--output", args.output)
     append_if_value(cmd, "--scale-mode", args.scale_mode if args.scale_mode != "stretch" else "fit")
@@ -217,7 +218,7 @@ def build_effect_render_command(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
-def handle_live(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+def handle_live(args: Namespace, parser: argparse.ArgumentParser) -> int:
     validate_live_args(args, parser)
 
     if args.render:

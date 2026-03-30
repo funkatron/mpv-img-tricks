@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="${ROOT_DIR}/tests/unit"
 
+if ! command -v uv >/dev/null 2>&1; then
+  echo "Unit tests require uv: https://docs.astral.sh/uv/" >&2
+  exit 1
+fi
+
+(cd "$ROOT_DIR" && uv sync --frozen) || (cd "$ROOT_DIR" && uv sync)
+
 if [ ! -d "$TEST_DIR" ]; then
   echo "No unit tests found: $TEST_DIR"
   exit 1

@@ -20,6 +20,8 @@
 *.tmp
 *.temp
 
-# Python
-python/__pycache__/
+# Python / uv
+.venv/
+dist/
+mpv_img_tricks/__pycache__/
 *.pyc
