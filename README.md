@@ -4,29 +4,45 @@
 
 Image slideshow and effects system for building live slideshows and rendered videos from image collections.
 
-Primary command: `./slideshow live`
+**Primary command:** `./slideshow live` (from the repository root, after setup below).
 
 This is a personal utility project. Breaking CLI changes are acceptable when they simplify the workflow.
 
-**Defaults:** Omitted `--duration` uses **2.0** seconds per image. The shared value lives in [`scripts/lib/constants.sh`](scripts/lib/constants.sh). Use `--duration 0.02` (or lower) for rapid cycling.
+**More detail:** [docs/setup.md](docs/setup.md) — prerequisites (`uv`, Python 3.11+, mpv, ffmpeg), all ways to invoke the CLI, environment variables, and troubleshooting.
 
-**Advanced:** Set `MPV_IMG_TRICKS_SCRIPTS_DIR` to override where the CLI loads its Bash implementation from (defaults to `scripts/` beside the repo root). Used by `./tests/run-unit.sh` and nonstandard checkouts.
+## Requirements (summary)
+
+- **[uv](https://docs.astral.sh/uv/)** on your `PATH` for `./slideshow` and for `./tests/run-unit.sh`.
+- **Python 3.11+**, **Bash**, **mpv**, and **ffmpeg** for real runs (versions are up to you; the CLI shells out to the Bash backends).
+- **fswatch** only if you use `--watch` (see [docs/setup.md](docs/setup.md)).
+
+**Defaults:** Omitted `--duration` uses **2.0** seconds per image. The shared value lives in [`scripts/lib/constants.sh`](scripts/lib/constants.sh). Use `--duration 0.02` (or lower) for rapid cycling.
 
 ## Installation
 
-This repo is a small **uv** project (`pyproject.toml`). From the checkout:
+This repository is a **[uv](https://docs.astral.sh/uv/)** project (`pyproject.toml`, `uv.lock`). From the checkout:
 
 ```bash
 uv sync
 ```
 
-Then use any of:
+That creates `.venv/` and installs the **`mpv-img-tricks`** package in editable mode (import name **`mpv_img_tricks`**).
 
-- `./slideshow live …` — thin wrapper around `uv run slideshow`
-- `uv run slideshow live …` — console script from the project environment
-- `uv run python -m mpv_img_tricks live …` — module entry
+**Run the CLI** (equivalent behavior):
 
-As a library, import helpers such as `mpv_img_tricks.get_scripts_dir` / `mpv_img_tricks.get_repo_root`, or `from mpv_img_tricks.cli import main` for the same CLI `main()` used by the `slideshow` command.
+| Invocation | When to use |
+|------------|-------------|
+| `./slideshow live …` | Default; same as `uv run slideshow` from repo root. |
+| `uv run slideshow live …` | Explicit project environment. |
+| `uv run python -m mpv_img_tricks live …` | Module entry (`python -m mpv_img_tricks`). |
+| `.venv/bin/slideshow live …` | After `uv sync`, without needing `uv` on the shell line. |
+
+**Library use:** `from mpv_img_tricks import get_scripts_dir, get_repo_root, main` or `from mpv_img_tricks.cli import main` for the same entrypoint the `slideshow` console script calls.
+
+**Environment variables** (full table in [docs/setup.md](docs/setup.md)):
+
+- **`MPV_IMG_TRICKS_ROOT`** — Force repository root when auto-discovery fails.
+- **`MPV_IMG_TRICKS_SCRIPTS_DIR`** — Force the `scripts/` directory (tests and custom layouts).
 
 Examples:
 ```bash
@@ -84,9 +100,9 @@ Examples:
 
 ## Implementation note
 
-Orchestration is implemented in Bash modules under `scripts/` and is invoked through the Python package `mpv_img_tricks` (`slideshow` / `python -m mpv_img_tricks`). Live key bindings come from [`mpv-scripts/blast.lua`](mpv-scripts/blast.lua). You do not need to run anything under `scripts/` directly.
+Orchestration lives in Bash under [`scripts/`](scripts/) and is driven only by the Python package **`mpv_img_tricks`** (console script **`slideshow`** or **`python -m mpv_img_tricks`**). Do not rely on calling `scripts/*.sh` directly; they are backends.
 
-If the checkout root cannot be found (for example imports from an unexpected working directory), set **`MPV_IMG_TRICKS_ROOT`** to the repository root. **`MPV_IMG_TRICKS_SCRIPTS_DIR`** still overrides the `scripts/` path directly.
+Live key bindings come from [`mpv-scripts/blast.lua`](mpv-scripts/blast.lua).
 
 ## Live Controls (with `blast.lua`)
 
@@ -286,7 +302,7 @@ Scale mode semantics for the slideshow CLI:
 
 ## Development Testing
 
-Unit tests expect **`uv`** on your `PATH` and run `uv sync` before executing checks.
+Unit tests require **`uv`** on your `PATH`. `./tests/run-unit.sh` runs `uv sync` first (uses `uv sync --frozen` when the lockfile allows).
 
 ```bash
 ./tests/run-unit.sh
@@ -296,7 +312,7 @@ Unit tests expect **`uv`** on your `PATH` and run `uv sync` before executing che
 
 Migration sequence:
 
-- **Phase 1 (Unified CLI)**: Land `slideshow live` as the primary interface while keeping shell scripts as internal execution backends.
+- **Phase 1 (Unified CLI) — done:** `slideshow live` is the primary interface; Bash remains the execution backend behind `mpv_img_tricks`.
 - **Phase 2 (Runtime Parity)**: Port core runtime orchestration (playlist discovery, mpv/ffmpeg invocation, multi-instance controls, watch mode plumbing) to Python.
 - **Phase 3 (Behavior Cleanup)**: Simplify/normalize flags during the Python move where complexity is not useful.
 - **Phase 4 (Testing Expansion)**: Add smoke/integration checks for watch mode and multi-instance behavior on the Python path.
