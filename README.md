@@ -123,7 +123,7 @@ Examples:
 
 Orchestration lives in Bash under [`scripts/`](scripts/) and is driven only by the Python package **`mpv_img_tricks`** (console script **`slideshow`** or **`python -m mpv_img_tricks`**). Do not rely on calling `scripts/*.sh` directly; they are backends.
 
-Live key bindings come from [`mpv-scripts/blast.lua`](mpv-scripts/blast.lua).
+Live key bindings come from [`mpv-scripts/blast.lua`](mpv-scripts/blast.lua). **Syncing / diffing with `~/.config/mpv`:** [docs/setup.md](docs/setup.md#mpv-keyboard-shortcuts-blastlua).
 
 ## Live Controls (with `blast.lua`)
 

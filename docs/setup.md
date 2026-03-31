@@ -82,6 +82,7 @@ A published wheel contains only the Python package. **Running the full tool stil
 | `MPV_IMG_TRICKS_SCRIPTS_DIR` | Absolute path to the directory that contains `slideshow.sh`, `img-effects.sh`, and `images-to-video.sh`. Overrides normal `scripts/` resolution (used by unit tests with mock backends). |
 | `MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR` | When set, `scripts/slideshow.sh` uses this directory if no image path is passed on the command line (personal automation only). |
 | `MPV_IMG_TRICKS_CONFIG` | Optional path to a **JSON** file with default CLI values (see below). If unset and `~/.config/mpv-img-tricks/config.json` exists, that file is loaded. |
+| `MPV_IMG_TRICKS_NO_BLAST` | If non-empty, **tile** live mpv launches skip auto-loading **`mpv-scripts/blast.lua`** (basic/chaos still use pipeline defaults). |
 
 ## Optional JSON defaults
 
@@ -128,6 +129,40 @@ Total output length is roughly **(number of images after `--limit`) × duration*
 ### Plain render (`--render` without `--effect`)
 
 **`images-to-video.sh`** paces frames with **`--img-per-sec`**, not **`--duration`**. The **`--duration`** flag does not control per-image timing on that path.
+
+## mpv keyboard shortcuts (`blast.lua`)
+
+Live slideshows run **mpv** with the repo script **[`mpv-scripts/blast.lua`](../mpv-scripts/blast.lua)** (speed presets on **Alt+1**–**Alt+6**, **j**/**k** playlist, **m** keep, **Shift+Delete** trash, zoom/pan, **c** shuffle, **l** loop, etc.). That matches **README** → *Live Controls*.
+
+| Code path | How `blast.lua` is loaded |
+|-----------|---------------------------|
+| **basic** / **chaos** | **`mpv-pipeline.sh`** adds **`--script=<repo>/mpv-scripts/blast.lua`** by default (`--use-blast-script yes`). |
+| **tile** | **`img-effects.sh`** **`run_mpv`** prepends the same **`--script=`** when the file exists (so tile matches basic/chaos). |
+| **Disable for tile** | Set environment **`MPV_IMG_TRICKS_NO_BLAST=1`** (empty unset = load script). |
+
+**Comparing machines:** bindings you like usually come from **this repo**, not from a global mpv profile—unless the other host also loads **`~/.config/mpv/input.conf`** or **`~/.config/mpv/scripts/*.lua`** and overrides the same keys.
+
+Suggested diff checklist:
+
+1. **Same checkout** — both machines need **`mpv-scripts/blast.lua`** at **`$REPO_ROOT/mpv-scripts/blast.lua`**. If the other machine only has an old clone or missing folder, you get stock mpv keys only.
+2. **mpv user config** — on each machine:
+
+   ```bash
+   ls -la ~/.config/mpv/
+   sed -n '1,200p' ~/.config/mpv/input.conf 2>/dev/null || true
+   ls ~/.config/mpv/scripts/ 2>/dev/null || true
+   ```
+
+   Compare **`input.conf`** line by line: global binds can override or fight **`add_forced_key_binding`** in Lua depending on load order.
+3. **What mpv actually got** — run a tiny session with debug (from repo root, example playlist):
+
+   ```bash
+   bash scripts/mpv-pipeline.sh --playlist /path/to/list.m3u --debug yes --instances 1
+   ```
+
+   Confirm the printed argv includes **`--script=.../mpv-scripts/blast.lua`**.
+
+**Customizing shortcuts:** edit **`mpv-scripts/blast.lua`** in this repo (and commit if you want both machines aligned), or maintain a personal fork of that file and pass **`--extra-script`** / copy into **`~/.config/mpv/scripts/`**—avoid loading **two** copies of the same bindings twice (duplicate **`--script`** or autoload + CLI **`--script`**).
 
 ## Tiled slideshow: what runs before playback
 

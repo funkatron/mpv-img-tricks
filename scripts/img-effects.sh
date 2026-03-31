@@ -906,9 +906,17 @@ tile_effect() {
 }
 
 run_mpv() {
+  # Match mpv-pipeline.sh: load repo blast.lua for tile and other direct mpv launches.
+  local -a mpv_cmd=(mpv)
+  local blast_lua="${SCRIPT_DIR}/../mpv-scripts/blast.lua"
+  if [[ -z "${MPV_IMG_TRICKS_NO_BLAST:-}" ]] && [[ -f "$blast_lua" ]]; then
+    mpv_cmd+=("--script=${blast_lua}")
+  fi
+  mpv_cmd+=("$@")
+
   if [ "$(uname -s)" = "Darwin" ] && [ "$DEBUG" != "true" ]; then
     # Filter known noisy macOS logs while keeping real mpv/ffmpeg errors visible.
-    mpv "$@" 2> >(
+    "${mpv_cmd[@]}" 2> >(
       awk '
         /CFURLCopyResourcePropertyForKey failed because it was passed a URL which has no scheme/ { next }
         /\+\[IMKClient subclass\]: chose IMKClient_Modern/ { next }
@@ -917,7 +925,7 @@ run_mpv() {
       ' >&2
     )
   else
-    mpv "$@"
+    "${mpv_cmd[@]}"
   fi
 }
 

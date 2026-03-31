@@ -55,6 +55,8 @@ export PATH="${BIN_DIR}:$PATH"
 bash "$SCRIPT_PATH" tile "$MEDIA_DIR" \
   --grid 2x1 --duration 0.2 --no-cache >/dev/null
 
+assert_contains "$MPV_LOG" "--script="
+assert_contains "$MPV_LOG" "mpv-scripts/blast.lua"
 assert_contains "$MPV_LOG" "--lavfi-complex="
 assert_contains "$MPV_LOG" "xstack=inputs=2"
 
