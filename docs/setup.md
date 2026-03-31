@@ -36,6 +36,8 @@ That creates `.venv/` and installs this project in **editable** mode (see `uv.lo
 | `.venv/bin/slideshow live …` | Works after `uv sync` **without** typing `uv` each time (still need the venv). |
 | `slideshow live …` (on `PATH`) | After you symlink or add `.venv/bin` to `PATH` — see below. |
 
+**Default subcommand:** **`live`** — you may run **`slideshow ~/pics`** (or **`./slideshow ~/pics`**) instead of **`slideshow live ~/pics`** as long as the first argument is not a different subcommand name. Behavior is defined in **`mpv_img_tricks/cli.py`** (`DEFAULT_SUBCOMMAND`, `SUBCOMMAND_NAMES`).
+
 **Package names:** PyPI-style name is `mpv-img-tricks`; Python import is `mpv_img_tricks`.
 
 ### Put `slideshow` on your `PATH`

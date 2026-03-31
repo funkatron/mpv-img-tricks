@@ -4,7 +4,7 @@
 
 Image slideshow and effects system for building live slideshows and rendered videos from image collections.
 
-**Primary command:** `./slideshow live` (from the repository root, after setup below).
+**Primary command:** `./slideshow live` from the repository root (after setup below). You can usually omit **`live`**: if the first argument is not another subcommand name, it defaults to **`live`**. For example, `./slideshow ~/pics` matches `./slideshow live ~/pics`. (Constants: **`DEFAULT_SUBCOMMAND`** / **`SUBCOMMAND_NAMES`** in `mpv_img_tricks/cli.py`.)
 
 This is a personal utility project. Breaking CLI changes are acceptable when they simplify the workflow.
 
@@ -37,7 +37,8 @@ That creates `.venv/` and installs the **`mpv-img-tricks`** package in editable 
 
 | Invocation | When to use |
 |------------|-------------|
-| `./slideshow live …` | Default; same as `uv run slideshow` from repo root. |
+| `./slideshow live …` | Default subcommand; same as `uv run slideshow` from repo root. |
+| `./slideshow …` (no subcommand) | Same as **`live`** when the first token is a path, glob, or option (not a reserved subcommand name). |
 | `uv run slideshow live …` | Explicit project environment. |
 | `uv run python -m mpv_img_tricks live …` | Module entry (`python -m mpv_img_tricks`). |
 | `.venv/bin/slideshow live …` | After `uv sync`, without needing `uv` on the shell line. |
@@ -53,6 +54,7 @@ To use the bare command `slideshow` from anywhere, put `.venv/bin` on your `PATH
 
 Examples:
 ```bash
+./slideshow ~/pics                      # same as: ./slideshow live ~/pics
 ./slideshow live ~/pics
 ./slideshow live ~/pics --effect chaos --duration 0.02
 ./slideshow live ~/pics --render --output out.mp4
@@ -151,6 +153,8 @@ When using mpv with `--script=mpv-scripts/blast.lua`, you can control playback:
 ## Options
 
 ### slideshow live
+
+The subcommand name **`live`** is optional as long as you are not adding other subcommands later: **`./slideshow <images_dir_or_glob> [options]`** is equivalent. Explicit **`live`** stays the clearest form in docs and scripts.
 
 ```bash
 ./slideshow live <images_dir_or_glob> [options]

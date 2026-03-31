@@ -17,7 +17,7 @@ Internal orientation for collaborators and future you. Summarizes repository lay
 ## 2. What this project is
 
 - **Pre-alpha** personal utility: live image slideshows via **mpv**, optional **ffmpeg** renders and visual effects.
-- **Public entry:** `./slideshow live …` from repo root (after `uv sync`), or `uv run slideshow`, or `python -m mpv_img_tricks`.
+- **Public entry:** `./slideshow …` from repo root (after `uv sync`; **`live`** is the default subcommand when the first arg is not another subcommand), or `uv run slideshow`, or `python -m mpv_img_tricks`.
 - **Orchestration:** Bash under `scripts/`; Python package **`mpv_img_tricks`** is a thin CLI that assembles backend commands (**do not** document direct `scripts/*.sh` invocation for end users; `image-effects.sh` is explicitly retired with an error message).
 
 ---
@@ -28,7 +28,7 @@ High-level patterns from recent commits (not an exhaustive changelog):
 
 - **Docs:** README refresh, `docs/setup.md`, PATH and symlink options for `slideshow`.
 - **Packaging:** `uv` project (`pyproject.toml`, `uv.lock`), `slideshow` console script, root `./slideshow` launcher.
-- **CLI:** Single `slideshow live` UX; default image duration **2.0 s** (see `scripts/lib/constants.sh`).
+- **CLI:** Single **`live`** subcommand (default when omitted); default image duration **2.0 s** (see `scripts/lib/constants.sh`).
 - **Semantics:** Scale modes (`fit` / `fill` / `stretch`) wired through `scripts/mpv-pipeline.sh`; argument order handling in `slideshow.sh`.
 - **Effects / playback:** Tile and chaos paths, optional sound with trim, ffmpeg effect presets, memory/thread guarding for ffmpeg, file ordering (`natural` vs `om`), randomized tile groups and caching.
 - **Cursor / process:** Three-lens–style guidance may live in **global** `~/.cursor/rules`; the repo may not ship `.cursor/rules` (check git history if you expect a local copy).
@@ -50,9 +50,9 @@ Python **only** parses arguments and runs backends with `subprocess`. Backends o
            (basic live path)        (chaos, tile, effects)    (plain --render, no --effect)
 ```
 
-- **`slideshow live`** with **`--render`** and **no** `--effect` → `images-to-video.sh`.
-- **`slideshow live`** with **`--render`** and an **ffmpeg** effect → `img-effects.sh`.
-- **`slideshow live`** without `--render`: **`basic`** → `slideshow.sh`; **`chaos`** / **`tile`** → `img-effects.sh`.
+- **`slideshow …`** (i.e. **`live`**, explicitly or by default) with **`--render`** and **no** `--effect` → `images-to-video.sh`.
+- **`slideshow …`** with **`--render`** and an **ffmpeg** effect → `img-effects.sh`.
+- **`slideshow …`** without `--render`: **`basic`** → `slideshow.sh`; **`chaos`** / **`tile`** → `img-effects.sh`.
 
 ### 4.2 Repo and scripts resolution
 
@@ -121,7 +121,7 @@ All tests are **Bash** under `tests/unit/*.sh`. Assertions use **`rg` (ripgrep)*
 |------|---------|
 | Install | `uv sync` |
 | Tests | `./tests/run-unit.sh` |
-| Primary use | `./slideshow live <path> [options]` |
+| Primary use | `./slideshow <path> [options]` or `./slideshow live <path> [options]` (equivalent today) |
 
 Full prerequisites and env vars: **[setup.md](setup.md)**.
 
@@ -131,7 +131,7 @@ Full prerequisites and env vars: **[setup.md](setup.md)**.
 
 - **Runtime deps:** Python 3.11+, Bash, mpv, ffmpeg; optional **fswatch** for `--watch`.
 - **Repo weight:** Large or binary assets may live under the repo root (e.g. demo media); they are not required for `uv sync` but affect clone size.
-- **Retired script:** `scripts/image-effects.sh` exits with instructions to use `./slideshow live`.
+- **Retired script:** `scripts/image-effects.sh` exits with instructions to use **`slideshow`** / **`slideshow live`** (same default subcommand).
 
 ---
 
@@ -183,6 +183,8 @@ This section is the guided read promised in earlier orientation: how effects are
 
 ### 12.1 Exact Python routing (recap)
 
+The table uses **`slideshow live`** for clarity; **`slideshow <path> …`** with **`live`** omitted is the same user flow (see **`DEFAULT_SUBCOMMAND`** in `cli.py`).
+
 | User flow | Backend script | Notes |
 |-----------|----------------|--------|
 | `slideshow live …` (no `--effect`, not `--render`) | `slideshow.sh` | “Basic” live; see §12.2 vs §12.3 |
@@ -191,7 +193,7 @@ This section is the guided read promised in earlier orientation: how effects are
 | `slideshow live … --render` (no `--effect`) | `images-to-video.sh` | Flipbook |
 | `slideshow live … --render --effect <name>` | `img-effects.sh` | FFmpeg effects use `--limit`, resolution, fps |
 
-**Important:** `img-effects.sh` still defines `basic_effect` → `run_live_pipeline_effect basic`, but **`mpv_img_tricks.cli` never invokes that path** for `./slideshow live` without `--effect`. The packaged entry always uses `slideshow.sh` for default basic live. The in-script `basic` case exists for anyone calling `img-effects.sh basic …` directly.
+**Important:** `img-effects.sh` still defines `basic_effect` → `run_live_pipeline_effect basic`, but **`mpv_img_tricks.cli` never invokes that path** for **`slideshow live`** / default-**`live`** without `--effect`. The packaged entry always uses `slideshow.sh` for default basic live. The in-script `basic` case exists for anyone calling `img-effects.sh basic …` directly.
 
 ### 12.2 `slideshow.sh` — what “basic live” actually does
 
