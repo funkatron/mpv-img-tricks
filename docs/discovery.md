@@ -2,7 +2,7 @@
 
 Internal orientation for collaborators and future you. Summarizes repository layout, how the CLI maps to Bash backends, tests, and sensible next steps. **For install and day-to-day use, start with [setup.md](setup.md) and the repo [README](../README.md).**
 
-*Last reviewed from git and tree: 2026-03-31.*
+*Last reviewed from git and tree: 2026-03-31 (includes §12 deep dive on `img-effects.sh`).*
 
 ---
 
@@ -151,7 +151,7 @@ Full prerequisites and env vars: **[setup.md](setup.md)**.
 ## 10. Suggested next steps (prioritized)
 
 1. **CI:** Add a workflow: checkout → `uv sync --frozen` → `./tests/run-unit.sh` (with ripgrep available).
-2. **Docs:** Link this file from README only if you want newcomers to find it; otherwise keep it discoverable via `docs/`.
+2. **Docs:** README already links here under “Architecture and maintenance”; extend §12 when you change dispatch or tile behavior.
 3. **Tests:** Add one focused test per fragile area you touch next (e.g. sound trim, watch) rather than boiling the ocean.
 4. **Roadmap:** There are no `TODO`/`FIXME` markers in-tree; track intentional follow-ups in issues or short comments near the relevant `case` branches in `img-effects.sh` if helpful.
 
@@ -174,3 +174,144 @@ flowchart LR
 ```
 
 Use this diagram when explaining the split between “basic pipeline” and “effects monolith.”
+
+---
+
+## 12. Deep dive — `img-effects.sh` dispatch and tile machinery
+
+This section is the guided read promised in earlier orientation: how effects are chosen, how **chaos** differs from **basic live** (which does not go through this file), and how **tile** branches between cheap **lavfi** playback and expensive **ffmpeg composite** paths.
+
+### 12.1 Exact Python routing (recap)
+
+| User flow | Backend script | Notes |
+|-----------|----------------|--------|
+| `slideshow live …` (no `--effect`, not `--render`) | `slideshow.sh` | “Basic” live; see §12.2 vs §12.3 |
+| `slideshow live … --effect chaos` | `img-effects.sh` | Live pipeline via `run_live_pipeline_effect` |
+| `slideshow live … --effect tile` | `img-effects.sh` | Tile funnel §12.6–§12.8 |
+| `slideshow live … --render` (no `--effect`) | `images-to-video.sh` | Flipbook |
+| `slideshow live … --render --effect <name>` | `img-effects.sh` | FFmpeg effects use `--limit`, resolution, fps |
+
+**Important:** `img-effects.sh` still defines `basic_effect` → `run_live_pipeline_effect basic`, but **`mpv_img_tricks.cli` never invokes that path** for `./slideshow live` without `--effect`. The packaged entry always uses `slideshow.sh` for default basic live. The in-script `basic` case exists for anyone calling `img-effects.sh basic …` directly.
+
+### 12.2 `slideshow.sh` — what “basic live” actually does
+
+After parsing args and resolving `mpv-pipeline.sh`, the script:
+
+1. Builds `TMPLIST` via `discover_images_to_playlist` with **recursive** discovery (`"true"` passed at the call site).
+2. Calls `build_pipeline_common_args` with **fullscreen `yes`** and playlist **loop mode `playlist`** (not `none`).
+3. Adds `--shuffle` according to `--shuffle`.
+4. Optionally installs **watch mode** (`fswatch`) with an IPC socket for `mpv-pipeline.sh`.
+5. Runs `"$MPV_PIPELINE" "${PIPELINE_ARGS[@]}"` — no `exec`; watch subprocess is stopped afterward.
+
+So **basic live** is “full-screen looping playlist + optional shuffle + optional watch,” all through the shared **canonical runner** (`mpv-pipeline.sh`).
+
+### 12.3 Top-to-bottom order inside `img-effects.sh`
+
+Rough execution order **before** the final `case "$EFFECT"`:
+
+1. Parse argv (`EFFECT` is `$1`, then `shift`; remaining args are flags).
+2. Validate flags (scale mode only **`fit`/`fill`** for this script, instances, encoder, master control, `--order`, etc.).
+3. Register `trap cleanup EXIT INT TERM` (sound temp, lua scale script, playlists, tile skip log, background audio PID).
+4. Discover inputs into `TMPLIST` (directory vs glob, optional `--recursive`, image extensions); **`sort_discovered_images`** applies **`natural`** (`sort -V`) or **`om`** (oldest mtime first, portable `stat`).
+5. Apply `--max-files` trim if set.
+6. **Then** the bottom **`case "$EFFECT"`** dispatcher runs (see §12.9).
+
+Render-style effects use **`get_limited_video_list`**, which copies the first **`LIMIT`** lines of `TMPLIST` to a side file and logs if that truncates the set (memory guard).
+
+### 12.4 Live modes inside `img-effects.sh`: `run_live_pipeline_effect`
+
+`basic_effect` and `chaos_effect` both delegate here; **`tile` does not**.
+
+| Mode   | Loop mode   | Fullscreen | Shuffle |
+|--------|-------------|------------|---------|
+| `basic` | `none`      | `no`       | `no` (+ `--mpv-arg --playlist-start=0`) |
+| `chaos` | `playlist` | `yes`      | `yes` |
+
+The function resolves **`mpv-pipeline.sh`**, builds shared pipeline argv (`build_pipeline_common_args`, audio, optional `--extra-script` for **`--random-scale`** lua), then **`exec`** the pipeline — the shell is replaced; no return to caller.
+
+Sound: if **`--sound`** is set, passes `--no-audio no` and mpv **`--audio-file=`**; else **`--no-audio yes`**. For **tile** with sound, behavior differs: see §12.6 (background `mpv` loop + main player **`--no-audio`**).
+
+### 12.5 FFmpeg “video effect” pattern (non-tile renders)
+
+Effects such as **ken-burns**, **crossfade**, **glitch**, **acid**, etc. follow the same skeleton:
+
+1. `input_list="$(get_limited_video_list "EffectName")"`.
+2. Bash loops read paths from `input_list`, building **`-filter_complex`** subgraphs and per-input **ffmpeg** `-loop 1 -t DURATION -i …` clauses.
+3. **`build_video_audio_args`** may prepend a looping audio input and map AAC when `--sound` is set (after **`prepare_sound_file`** trim).
+4. One **`eval "ffmpeg ${FFMPEG_MEM_ARGS} …"`** line writes **`OUTPUT`** (or a default filename). **`FFMPEG_MEM_ARGS`** caps filter/thread parallelism.
+
+After the dispatcher, if **`OUTPUT`** is set and the effect is not basic/chaos, the script prints a suggested **`mpv --fs`** command.
+
+### 12.6 `tile_effect` — entry and sound
+
+Approximate **line region ~822** onward:
+
+1. **`configure_tile_video_encoder`** when **`--animate-videos`**: probes `ffmpeg -encoders` for VideoToolbox / libx265 / libx264 and fills **`TILE_VIDEO_CODEC_ARGS`**.
+2. **Sound**
+   - If **`SOUND_FILE`**: **`start_background_audio_loop`** (separate `mpv --no-video --loop-file=inf`), and the main tile player uses **`AUDIO_ARGS=(--no-audio)`** so video sync stays simple.
+   - Else: **`build_audio_args`** for inline mpv audio when supported.
+3. **`detect_screen_resolution`**: macOS **`system_profiler SPDisplaysDataType`**, Linux **`xrandr`**, else falls back to **`RESOLUTION`**.
+4. **`filter_tile_readable_inputs`**: optional **`ffprobe`** pass; without ffprobe, validation is skipped.
+5. Branch: **`RANDOMIZE`** → **`tile_effect_randomized`**, else **`tile_effect_fixed`**.
+
+### 12.7 Fixed grid: lavfi fast path vs ffmpeg composites
+
+**`tile_effect_fixed`** (~1139+):
+
+- Computes cell geometry from **`GRID`**, **`SPACING`**, and detected screen size; **`build_tile_cell_filter`** maps **`fit`** vs **`fill`** to scale/pad vs scale/crop.
+
+**Heavy path** when **`INPUT_COUNT > TILE_COUNT`** OR **`SPACING > 0`**:
+
+- Renders each slide to a temp directory with **`nice -n 10 ffmpeg`** — either **one frame** (`-frames:v 1` → `.jpg`) or **animated** segment (`-t "$DURATION"` → `.mp4`) depending on **`ANIMATE_VIDEOS`**.
+- Plays the ordered composites with **`run_mpv`**, then **`rm -rf` the composite dir**.
+
+**Light path** (single “page” that fits the grid **and** **no spacing**):
+
+- Builds **`--lavfi-complex`** **`xstack`** graph, attaches up to **`TILE_COUNT`** files via first file + **`--external-file`**, and runs **`run_mpv`** once (live compositing).
+
+Comment in-script: spacing forces the composite path because the lavfi layout does not implement gaps cleanly.
+
+### 12.8 Randomized tile: layouts, cache, memory sampling
+
+**`tile_effect_randomized`** (~1459+):
+
+1. Builds a pool of **`cols x rows : tile_count`** layouts constrained by **`GROUP_SIZE`**.
+2. Defines nested **`play_composite_dir`**: collects **`*.jpg`** or **`*.mp4`**, sorts, invokes **`run_mpv`** with **`--shuffle`** and **`--loop-playlist=inf`** (still images use **`--image-display-duration`**; video composites omit it).
+3. **Cache** (when **`CACHE_COMPOSITES`** true): directory **`~/.cache/mpv-img-tricks/tile-randomized/`**, keyed by **`shasum`** (or **`cksum`**) over metadata including **`CACHE_VERSION`**, source dir, screen, group size, animate flag, encoder, duration, fps, scale, spacing. On hit, replays cached composites without rebuilding.
+4. Compositing loop: parallel jobs ( **`JOBS`** or half CPU count), **`render_randomized_slide`**, tracks **`ACTIVE_PIDS`**, optional **RSS** sampling and **>512MB** warning for the script process.
+
+**Cleanup:** `trap` + end of randomized path remove temps; cached dirs are kept when **`cache_used`**.
+
+### 12.9 Bottom dispatcher (effect switch)
+
+The **`case "$EFFECT"`** at **~1879–1919** is the single exit switch: **`basic`**, **`chaos`**, **`ken-burns`**, **`crossfade`**, **`glitch`**, **`acid`**, **`reality`**, **`kaleido`**, **`matrix`**, **`liquid`**, **`tile`**, default error.
+
+Immediately after: remove **`TMPLIST`**; optional **“Play with mpv”** hint for rendered outputs.
+
+### 12.10 Cross-file relationships
+
+- **`scripts/lib/pipeline.sh`** (sourced): **`build_pipeline_common_args`**, shared between **`slideshow.sh`** and **`img-effects.sh`** live paths.
+- **`scripts/mpv-pipeline.sh`**: actual mpv launcher / multi-instance wiring consumed by **`run_live_pipeline_effect`** and **`slideshow.sh`**.
+- **`scripts/lib/validate.sh`**: shared validation helpers.
+
+### 12.11 Diagram — inside `img-effects.sh` after discovery
+
+```mermaid
+flowchart TD
+  A["Parse args + validate"]
+  B["TMPLIST discovery + sort"]
+  C{"case EFFECT"}
+  L1["run_live_pipeline_effect"]
+  L2["FFmpeg effect fn"]
+  T["tile_effect"]
+  TF["tile_effect_fixed"]
+  TR["tile_effect_randomized"]
+  A --> B --> C
+  C -->|"basic, chaos"| L1
+  C -->|"ken-burns, glitch, …"| L2
+  C -->|"tile"| T
+  T --> TF
+  T --> TR
+```
+
+This complements §11: §11 is package-level routing; §12 is **inside** the largest backend script.
