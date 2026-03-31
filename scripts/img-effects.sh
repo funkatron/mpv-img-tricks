@@ -55,6 +55,7 @@ USE_PLAYLIST="false"  # Whether to use playlist file for large image sets
 RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scaling
 CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
 CACHE_VERSION="v3"  # Bump when randomized composite behavior changes
+CLEAR_TOOL_CACHE="false"  # --clear-cache: rm ~/.cache/mpv-img-tricks/{ffprobe-tile-*,tile-randomized}
 JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
 SOUND_FILE=""  # Optional sound file during slideshow playback
@@ -89,6 +90,23 @@ say_phase() {
     return 0
   fi
   printf '%s %s\n' "$PHASE_PREFIX" "$*" >&2
+}
+
+_mpv_img_tricks_clear_tool_caches() {
+  local base="${HOME}/.cache/mpv-img-tricks"
+  local removed="false"
+  local d
+  for d in "${base}/ffprobe-tile-v1" "${base}/ffprobe-tile-v2" "${base}/tile-randomized"; do
+    if [[ -e "$d" ]]; then
+      rm -rf "$d"
+      removed="true"
+    fi
+  done
+  if [[ "$removed" == "true" ]]; then
+    say_phase "phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 tile-randomized"
+  else
+    say_phase "phase=cache msg=cleared noop dir=${base}"
+  fi
 }
 
 run_under_nice() {
@@ -447,6 +465,10 @@ while [[ $# -gt 0 ]]; do
       CACHE_COMPOSITES="false"
       shift
       ;;
+    --clear-cache)
+      CLEAR_TOOL_CACHE="true"
+      shift
+      ;;
     --no-recursive)
       RECURSIVE="false"
       shift
@@ -493,6 +515,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --recursive, -R  Recurse into subdirectories (default: on)"
       echo "  --no-recursive    Only scan the top-level directory for images"
       echo "  --no-cache       Rebuild randomized tile composites (default: cache enabled)"
+      echo "  --clear-cache    Remove ~/.cache/mpv-img-tricks ffprobe-tile-* and tile-randomized, then continue"
       echo "  --animate-videos Render animated tile clips (mp4) instead of still composites"
       echo "  --encoder NAME   Animated tile encoder: auto|hevc_videotoolbox|libx265|libx264"
       echo "  --playlist, -p   Use playlist file for large image sets (ensures all images are loaded)"
@@ -508,6 +531,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [ "$CLEAR_TOOL_CACHE" = "true" ]; then
+  _mpv_img_tricks_clear_tool_caches
+fi
 
 # Enable shell tracing after arg parsing so debug focuses on runtime logic.
 if [ "$DEBUG" = "true" ]; then

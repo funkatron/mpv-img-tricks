@@ -95,6 +95,16 @@ assert_contains "$LOG_FILE" "img-effects.sh chaos ${MEDIA_DIR} --duration 0.01 -
 slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --randomize --duration 0.01 >/dev/null
 assert_contains "$LOG_FILE" "img-effects.sh tile ${MEDIA_DIR}/*.mov --duration 0.01 --scale-mode fit --instances 1 --grid 2x2 --randomize"
 
+: > "${WORK_DIR}/dry-clear.txt"
+slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --clear-cache --dry-run >"${WORK_DIR}/dry-clear.txt"
+assert_contains "${WORK_DIR}/dry-clear.txt" "--clear-cache"
+assert_contains "${WORK_DIR}/dry-clear.txt" "img-effects.sh tile"
+
+if slideshow live "$MEDIA_DIR" --clear-cache >/dev/null 2>"${WORK_DIR}/clear-basic.err"; then
+  fail "expected --clear-cache with basic live to fail"
+fi
+assert_contains "${WORK_DIR}/clear-basic.err" "clear-cache"
+
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --render --output out.mp4 >/dev/null
 assert_contains "$LOG_FILE" "images-to-video.sh ${MEDIA_DIR} 60 1920x1080 out.mp4"

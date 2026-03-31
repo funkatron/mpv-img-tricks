@@ -212,9 +212,10 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
 
 **Tile validate-media skipped every file (`kept=0`)**
 
-- Clear the probe cache and retry (old entries or a bad first run can persist until files change):  
+- From the CLI (tile / chaos / render-with-effect): add **`--clear-cache`** once to remove **`ffprobe-tile-*`** and **`tile-randomized`** under **`~/.cache/mpv-img-tricks/`**, then continue the same run.
+- Or delete manually:  
   `rm -rf ~/.cache/mpv-img-tricks/ffprobe-tile-v1 ~/.cache/mpv-img-tricks/ffprobe-tile-v2`
-- Or bypass the cache once:  
+- Or bypass the probe cache only (still uses composite cache):  
   `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE=1 slideshow … --effect tile …`
 - If it still skips all paths, test one file:  
   `ffprobe -v error -i /path/to/one/image` — non-zero exit means **ffprobe/ffmpeg** cannot read that media (corrupt format, permissions, or missing codecs).

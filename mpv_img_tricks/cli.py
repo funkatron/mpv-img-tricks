@@ -157,6 +157,11 @@ def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Print the backend argv and exit without running mpv/ffmpeg",
     )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Remove mpv-img-tricks caches under ~/.cache/mpv-img-tricks/ (ffprobe validate + tile composites), then run",
+    )
 
 
 def append_if_value(cmd: list[str], flag: str, value: object | None) -> None:
@@ -197,6 +202,19 @@ def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None
 
     if args.recursive and getattr(args, "effect_no_recursive", False):
         parser.error("choose either --recursive or --no-subdirs for effect discovery, not both")
+
+    if getattr(args, "clear_cache", False):
+        effect = args.effect or "basic"
+        if args.render and not args.effect:
+            parser.error(
+                "--clear-cache only clears img-effects caches (ffprobe validate, tile composites); "
+                "omit it for plain --render or use with --effect …"
+            )
+        if not args.render and effect == "basic":
+            parser.error(
+                "--clear-cache applies to --effect tile, --effect chaos, or --render with --effect … "
+                "(not basic live-only)"
+            )
 
 
 def build_live_backend_command(args: Namespace) -> list[str]:
@@ -252,6 +270,7 @@ def build_live_backend_command(args: Namespace) -> list[str]:
         else:
             append_if_true(cmd, "--recursive", args.recursive)
 
+    append_if_true(cmd, "--clear-cache", getattr(args, "clear_cache", False))
     return cmd
 
 
@@ -285,6 +304,7 @@ def build_effect_render_command(args: Namespace) -> list[str]:
         append_if_true(cmd, "--recursive", args.recursive)
     append_if_true(cmd, "--random-scale", args.random_scale)
     append_diagnostic(cmd, args)
+    append_if_true(cmd, "--clear-cache", getattr(args, "clear_cache", False))
     return cmd
 
 
