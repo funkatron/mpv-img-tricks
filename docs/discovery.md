@@ -66,6 +66,8 @@ Python **only** parses arguments and runs backends with `subprocess`. Backends o
 
 `mpv_img_tricks/cli.py` rejects incompatible combinations (examples): `--effect` that is render-only without `--render`, live-only `--effect` with `--render`, `--watch` or `--shuffle` with `--render`, conflicting master-control flags.
 
+**`--duration` semantics** (live vs tile vs ffmpeg renders vs plain `--render`): [setup.md § Slide duration](setup.md#slide-duration).
+
 ---
 
 ## 5. Complexity map (where the lines are)

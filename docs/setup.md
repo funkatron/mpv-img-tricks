@@ -101,6 +101,37 @@ Example `~/.config/mpv-img-tricks/config.json`:
 }
 ```
 
+## Slide duration
+
+CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, e.g. `0.5`).
+
+### Defaults
+
+| Entrypoint | Default |
+|------------|---------|
+| **`slideshow …`** (Python CLI) | **2.0** s (`scripts/lib/constants.sh`), unless JSON config or flags override |
+| **`img-effects.sh` invoked directly** | **0.05** s in-script default — use the **`slideshow`** CLI for the same defaults as the rest of the tool |
+
+### Live playback
+
+| Mode | Meaning of `--duration` |
+|------|-------------------------|
+| **basic**, **chaos** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
+| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments, ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
+
+### ffmpeg render effects (`--render --effect …`)
+
+For **ken-burns**, **crossfade**, **glitch**, **acid**, **reality**, **kaleido**, **matrix**, **liquid** (anything that builds a video through `img-effects.sh` render helpers):
+
+- Each source image is fed to ffmpeg as **`-loop 1 -t <duration> -i <file>`**, so every still contributes **about `duration` seconds** of decoded video to the filter chain before concatenation.
+- **Ken-burns** also drives **zoompan** with **`d = round(duration × fps)`** frames at the output rate **`--fps`** (at least **1** frame). Changing **`--fps`** changes how many frames that zoom span covers; wall-clock time per image stays tied to **`duration`** and the output **`--fps`**.
+
+Total output length is roughly **(number of images after `--limit`) × duration** per segment, plus encoder startup — use **`ffprobe`** on the result if you need exact timing.
+
+### Plain render (`--render` without `--effect`)
+
+**`images-to-video.sh`** paces frames with **`--img-per-sec`**, not **`--duration`**. The **`--duration`** flag does not control per-image timing on that path.
+
 ## Tiled slideshow: what runs before playback
 
 For `--effect tile` (and similar compositing paths), work is not silent: phases are printed on stderr with the prefix `mpv-img-tricks:` when `--quiet` is not set. Rough order:

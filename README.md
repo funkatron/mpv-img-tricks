@@ -33,7 +33,7 @@ That runs **`./tests/run-unit.sh`** (needs **`uv`** and **`rg`**) plus **shellch
 - **Python 3.11+**, **Bash**, **mpv**, and **ffmpeg** for real runs (versions are up to you; the CLI shells out to the Bash backends).
 - **fswatch** only if you use `--watch` (see [docs/setup.md](docs/setup.md)).
 
-**Defaults:** Omitted `--duration` uses **2.0** seconds per image. The shared value lives in [`scripts/lib/constants.sh`](scripts/lib/constants.sh). Use `--duration 0.02` (or lower) for rapid cycling.
+**Defaults:** Omitted `--duration` uses **2.0** seconds per image (packaged CLI). The shared value lives in [`scripts/lib/constants.sh`](scripts/lib/constants.sh). Use `--duration 0.02` (or lower) for rapid cycling. **How duration applies** (live vs tile vs ffmpeg effects vs plain `--render`): [docs/setup.md](docs/setup.md#slide-duration).
 
 ## Installation
 
