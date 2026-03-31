@@ -10,6 +10,8 @@ This is a personal utility project. Breaking CLI changes are acceptable when the
 
 **More detail:** [docs/setup.md](docs/setup.md) — prerequisites (`uv`, Python 3.11+, mpv, ffmpeg), all ways to invoke the CLI, environment variables, and troubleshooting.
 
+**Architecture and maintenance:** [docs/discovery.md](docs/discovery.md) — how the Python CLI maps to Bash backends, test coverage, and where to change behavior.
+
 ## Requirements (summary)
 
 - **[uv](https://docs.astral.sh/uv/)** on your `PATH` for `./slideshow` and for `./tests/run-unit.sh`.
