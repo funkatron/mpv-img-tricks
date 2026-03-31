@@ -27,6 +27,11 @@ RENDER_EFFECTS = {
 }
 ALL_EFFECTS = sorted(LIVE_EFFECTS | RENDER_EFFECTS)
 
+# When this tuple has exactly one name, `main` prepends it so users may omit the subcommand
+# (e.g. `slideshow ~/pics` → `slideshow live ~/pics`). Add new names here when registering
+# additional subparsers in ``build_parser``; auto-injection turns off automatically if len != 1.
+REGISTERED_SUBCOMMANDS = ("live",)
+
 
 def run_command(cmd: list[str]) -> int:
     return subprocess.run(cmd, check=False).returncode
@@ -326,11 +331,12 @@ def build_parser() -> argparse.ArgumentParser:
     live_parser.epilog = "\n".join(
         [
             "Examples:",
+            "  slideshow ~/pics",
             "  slideshow live ~/pics",
-            "  slideshow live ~/pics --effect chaos --duration 0.02",
+            "  slideshow ~/pics --effect chaos --duration 0.02",
             "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
-            "  slideshow live ~/pics --render --output out.mp4",
-            "  slideshow live ~/pics --render --effect glitch --output glitch.mp4",
+            "  slideshow ~/pics --render --output out.mp4",
+            "  slideshow ~/pics --render --effect glitch --output glitch.mp4",
             "Optional defaults: ~/.config/mpv-img-tricks/config.json or MPV_IMG_TRICKS_CONFIG (JSON).",
         ]
     )
@@ -341,7 +347,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    if len(REGISTERED_SUBCOMMANDS) == 1 and argv and argv[0] != REGISTERED_SUBCOMMANDS[0]:
+        argv = [REGISTERED_SUBCOMMANDS[0], *argv]
+    args = parser.parse_args(argv)
     return args.handler(args, args.parser)
 
 

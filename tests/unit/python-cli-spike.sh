@@ -71,6 +71,10 @@ slideshow live "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
 assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
 
 : > "$LOG_FILE"
+slideshow "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
+
+: > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --effect chaos --duration 0.01 >/dev/null
 assert_contains "$LOG_FILE" "img-effects.sh chaos ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
 
