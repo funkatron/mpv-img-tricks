@@ -8,6 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/constants.sh"
+source "${SCRIPT_DIR}/lib/mpv_slideshow_bindings.sh"
 
 DURATION="${DEFAULT_SLIDESHOW_DURATION_SECONDS}"
 PLAYLIST_FILE=""
@@ -16,7 +17,7 @@ SHUFFLE="false"
 LOOP_MODE="playlist" # none|file|playlist
 SCALE_MODE="fit"     # fit|fill|stretch
 DOWNSCALE_LARGER="true"
-USE_BLAST_SCRIPT="true"
+USE_SLIDESHOW_BINDINGS="true"
 NO_AUDIO="true"
 WATCH_IPC_SOCKET=""
 INSTANCES="1"
@@ -45,7 +46,7 @@ Options:
   --loop-mode MODE                none|file|playlist (default: playlist)
   --scale-mode MODE               fit|fill|stretch (default: fit)
   --downscale-larger yes|no       Keep/downscale larger images (default: yes)
-  --use-blast-script yes|no       Load mpv-scripts/blast.lua if present
+  --use-slideshow-bindings yes|no Load mpv-scripts/slideshow-bindings.lua if present
   --no-audio yes|no               Pass --no-audio (default: yes)
   --watch-ipc-socket PATH         mpv IPC socket path
   --instances N                   Number of mpv instances (default: 1)
@@ -165,12 +166,13 @@ build_base_args() {
     BASE_ARGS+=("--input-ipc-server=${WATCH_IPC_SOCKET}")
   fi
 
-  if is_yes "$USE_BLAST_SCRIPT"; then
-    local blast_script="${repo_root}/mpv-scripts/blast.lua"
-    if [[ -f "$blast_script" ]]; then
-      BASE_ARGS+=("--script=${blast_script}")
+  if mpv_img_tricks_slideshow_bindings_should_load "$USE_SLIDESHOW_BINDINGS"; then
+    local bindings_script
+    bindings_script="$(mpv_img_tricks_slideshow_bindings_script_path "$repo_root")"
+    if [[ -f "$bindings_script" ]]; then
+      BASE_ARGS+=("--script=${bindings_script}")
     elif is_yes "$DEBUG"; then
-      echo "Debug: blast.lua not found at ${blast_script}" >&2
+      echo "Debug: slideshow-bindings.lua not found at ${bindings_script}" >&2
     fi
   fi
 
@@ -358,8 +360,8 @@ while [[ $# -gt 0 ]]; do
       DOWNSCALE_LARGER="${2:-}"
       shift 2
       ;;
-    --use-blast-script)
-      USE_BLAST_SCRIPT="${2:-}"
+    --use-slideshow-bindings)
+      USE_SLIDESHOW_BINDINGS="${2:-}"
       shift 2
       ;;
     --no-audio)

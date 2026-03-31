@@ -1,5 +1,5 @@
--- blast.lua — quick speed toggles for rapid-fire image slideshows
--- Place via: --script=mpv-scripts/blast.lua  (or in ~/.config/mpv/scripts)
+-- slideshow-bindings.lua — quick speed toggles for rapid-fire image slideshows
+-- Place via: --script=mpv-scripts/slideshow-bindings.lua  (or in ~/.config/mpv/scripts)
 local mp = require 'mp'
 
 local function set_dur(sec)

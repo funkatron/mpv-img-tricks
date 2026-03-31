@@ -68,7 +68,7 @@ Python **only** parses arguments and runs backends with `subprocess`. Backends o
 
 **`--duration` semantics** (live vs tile vs ffmpeg renders vs plain `--render`): [setup.md § Slide duration](setup.md#slide-duration).
 
-**mpv / `blast.lua`:** [setup.md § mpv keyboard shortcuts](setup.md#mpv-keyboard-shortcuts-blastlua).
+**mpv / slideshow bindings:** [setup.md — mpv keyboard shortcuts](setup.md#mpv-keyboard-shortcuts).
 
 ---
 

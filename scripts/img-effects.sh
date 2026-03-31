@@ -6,8 +6,8 @@ set -euo pipefail
 # This file is the Bash backend; do not treat it as a public entrypoint.
 #
 # Effects:
-#   basic     - Simple slideshow (like original blast.sh)
-#   chaos     - Shuffled rapid-fire (like blast-chaos.sh)
+#   basic     - Simple slideshow
+#   chaos     - Shuffled rapid-fire
 #   ken-burns - Smooth zoom/pan transitions
 #   crossfade - Smooth blending between images
 #   glitch    - Datamosh-style corruption effects
@@ -36,6 +36,7 @@ source "${SCRIPT_DIR}/lib/path.sh"
 source "${SCRIPT_DIR}/lib/pipeline.sh"
 source "${SCRIPT_DIR}/lib/validate.sh"
 source "${SCRIPT_DIR}/lib/constants.sh"
+source "${SCRIPT_DIR}/lib/mpv_slideshow_bindings.sh"
 
 # Default values
 EFFECT="${1:-basic}"
@@ -906,11 +907,14 @@ tile_effect() {
 }
 
 run_mpv() {
-  # Match mpv-pipeline.sh: load repo blast.lua for tile and other direct mpv launches.
+  # Same slideshow-bindings policy as mpv-pipeline.sh (see mpv_slideshow_bindings.sh).
   local -a mpv_cmd=(mpv)
-  local blast_lua="${SCRIPT_DIR}/../mpv-scripts/blast.lua"
-  if [[ -z "${MPV_IMG_TRICKS_NO_BLAST:-}" ]] && [[ -f "$blast_lua" ]]; then
-    mpv_cmd+=("--script=${blast_lua}")
+  local repo_root
+  repo_root="$(resolve_repo_root_from_script "$SCRIPT_SOURCE")"
+  local bindings_script
+  bindings_script="$(mpv_img_tricks_slideshow_bindings_script_path "$repo_root")"
+  if mpv_img_tricks_slideshow_bindings_should_load "yes" && [[ -f "$bindings_script" ]]; then
+    mpv_cmd+=("--script=${bindings_script}")
   fi
   mpv_cmd+=("$@")
 

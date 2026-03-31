@@ -198,7 +198,7 @@ if [[ ! -d "$DIR" ]]; then
 fi
 
 if [[ "$QUIET_MODE" != "true" ]]; then
-  echo "🎸 FLEXIBLE IMAGE BLAST"
+  echo "🎸 FLEXIBLE IMAGE SLIDESHOW"
   echo "📁 Directory: $DIR"
   echo "⏱️  Duration: ${DURATION}s per image"
   echo "🔍 Upscale smaller: $UPSCALE_SMALLER"
