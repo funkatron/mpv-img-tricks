@@ -89,6 +89,7 @@ Python **only** parses arguments and runs backends with `subprocess`. Backends o
 
 ```bash
 ./tests/run-unit.sh
+# or: make test   (same); make ci   (unit tests + scoped shellcheck, matches CI locally)
 ```
 
 Requires **`uv`** on `PATH`. The harness runs `uv sync` (or `--frozen` when lockfile allows).

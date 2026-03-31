@@ -14,6 +14,16 @@ This is a personal utility project. Breaking CLI changes are acceptable when the
 
 **Improvement ideas (prioritized):** [docs/recommendations.md](docs/recommendations.md) — UX, testing/CI, portability, Python vs Bash boundary, security, repo hygiene.
 
+## Development (tests before push)
+
+After **`uv sync`**, run the same checks CI uses:
+
+```bash
+make ci
+```
+
+That runs **`./tests/run-unit.sh`** (needs **`uv`** and **`rg`**) plus **shellcheck** on the scoped Bash scripts. Use **`make test`** for unit tests only. Details: [.github/workflows/ci.yml](.github/workflows/ci.yml), [docs/setup.md](docs/setup.md#routine-checks).
+
 ## Requirements (summary)
 
 - **[uv](https://docs.astral.sh/uv/)** on your `PATH` for `./slideshow` and for `./tests/run-unit.sh`.

@@ -21,7 +21,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ripgrep
 
       - name: Unit tests
-        run: ./tests/run-unit.sh
+        run: make test
 
   # Scoped until mpv-pipeline.sh / img-effects.sh are ShellCheck-clean (R-14).
   shellcheck:
@@ -32,10 +32,5 @@ jobs:
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
-      - name: ShellCheck (scripts/lib + small entrypoints)
-        run: |
-          set -euo pipefail
-          shellcheck scripts/lib/*.sh
-          shellcheck scripts/image-effects.sh
-          shellcheck scripts/slideshow.sh
-          shellcheck scripts/images-to-video.sh
+      - name: ShellCheck (Makefile target — same list as local `make shellcheck`)
+        run: make shellcheck

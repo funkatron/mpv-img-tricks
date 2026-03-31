@@ -112,6 +112,17 @@ For `--effect tile` (and similar compositing paths), work is not silent: phases 
 
 If screen size detection fails (no usable `system_profiler` / `xrandr`), tile layout falls back to `--resolution`.
 
+## Routine checks
+
+From the repository root (after `uv sync`):
+
+| Command | What it runs |
+|---------|----------------|
+| `./tests/run-unit.sh` | All `tests/unit/*.sh` (same as CI **unit** job). Requires **`uv`** and **`rg`**. |
+| `make test` | Same as above. |
+| `make shellcheck` | Same **scoped** ShellCheck as CI (**shellcheck** on `PATH` required). |
+| `make ci` | **`make test`** then **`make shellcheck`** — use this before a push to match CI. |
+
 ## CI and restricted environments
 
 GitHub Actions and normal Linux/macOS runners are fine for `./tests/run-unit.sh`. Some **sandboxed** or highly locked-down environments block `nice(2)` or bash process substitution used inside `img-effects.sh`; if compositing tests fail with “Operation not permitted”, run the same command on a full VM or your laptop shell.
