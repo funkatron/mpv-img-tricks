@@ -54,7 +54,7 @@ RECURSIVE="true"  # Whether to recurse into subdirectories (align with basic sli
 USE_PLAYLIST="false"  # Whether to use playlist file for large image sets
 RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scaling
 CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
-CACHE_VERSION="v3"  # Bump when randomized composite behavior changes
+CACHE_VERSION="v4"  # Bump when randomized composite behavior changes
 CLEAR_TOOL_CACHE="false"  # --clear-cache: rm ~/.cache/mpv-img-tricks/{ffprobe-tile-*,tile-randomized}
 JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
@@ -203,14 +203,10 @@ resolve_parallel_job_count_for_tile() {
   fi
 }
 
-# Writes ok or fail to workdir/${idx}.result. Cache key avoids file paths: stat dev/inode/size/mtime,
-# plus (when inode is 0 or stat failed) MD5 of the first 64KiB to disambiguate exFAT-style trees.
-filter_tile_validate_one() {
-  local idx="$1"
-  local media="$2"
-  local workdir="$3"
-  local cache_root="$4"
-  local id="" ino="" sample_hash="" h cfile res tmpf
+# Hex id for ffprobe-tile-v3 cache filenames and composite manifests (stat + optional byte sample; no paths).
+_mpv_img_tricks_media_probe_cache_key_hex() {
+  local media="$1"
+  local id="" ino="" sample_hash="" h
 
   if command -v stat >/dev/null 2>&1 && [[ -e "$media" ]]; then
     if ! id=$(stat -c '%d:%i:%s:%Y' "$media" 2>/dev/null); then
@@ -232,12 +228,25 @@ filter_tile_validate_one() {
     [ -z "$sample_hash" ] && sample_hash="_"
   fi
 
+  if [ -n "$sample_hash" ]; then
+    h=$(printf '%s\0%s\0%s' "ffprobe-tile-v3" "${id:-_}" "$sample_hash" | probe_cache_md5_hex)
+  else
+    h=$(printf '%s\0%s' "ffprobe-tile-v3" "${id:-_}" | probe_cache_md5_hex)
+  fi
+  printf '%s' "$h"
+}
+
+# Writes ok or fail to workdir/${idx}.result. Cache key avoids file paths: stat dev/inode/size/mtime,
+# plus (when inode is 0 or stat failed) MD5 of the first 64KiB to disambiguate exFAT-style trees.
+filter_tile_validate_one() {
+  local idx="$1"
+  local media="$2"
+  local workdir="$3"
+  local cache_root="$4"
+  local h cfile res
+
   if [ -n "$cache_root" ]; then
-    if [ -n "$sample_hash" ]; then
-      h=$(printf '%s\0%s\0%s' "ffprobe-tile-v3" "${id:-_}" "$sample_hash" | probe_cache_md5_hex)
-    else
-      h=$(printf '%s\0%s' "ffprobe-tile-v3" "${id:-_}" | probe_cache_md5_hex)
-    fi
+    h=$(_mpv_img_tricks_media_probe_cache_key_hex "$media")
     cfile="${cache_root}/${h}"
     if [ -f "$cfile" ]; then
       res=$(tr -d '\n' <"$cfile")
@@ -1864,12 +1873,21 @@ tile_effect_randomized() {
 
   CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/tile-randomized"
   cache_used="false"
+
+  # Ordered list of per-file identities (matches ALL_IMAGES / TMPLIST), hashed — no source path.
+  source_manifest_hash=$(
+    for img in "${ALL_IMAGES[@]}"; do
+      _mpv_img_tricks_media_probe_cache_key_hex "$img"
+      printf '\n'
+    done | if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'; else cksum | awk '{print $1 "-" $2}'; fi
+  )
+
   cache_key_tmp="$(mktemp)"
   {
     # Stable cache key: prefer reuse unless user requests --no-cache.
     echo "cache_version=${CACHE_VERSION}"
     echo "effect=tile-randomized"
-    echo "source=${DIR}"
+    echo "source_manifest=${source_manifest_hash}"
     echo "recursive=${RECURSIVE}"
     echo "screen=${SCREEN_RES}"
     echo "group_size=${GROUP_SIZE}"
