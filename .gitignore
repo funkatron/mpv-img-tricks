@@ -15,10 +15,16 @@
 
 # macOS
 .DS_Store
+**/.DS_Store
 
 # Temporary files
 *.tmp
 *.temp
+tmp/
+
+# Allow tracked fixtures even when generic media patterns exist below
+!fixtures/
+!fixtures/**/*
 
 # Python / uv
 .venv/
