@@ -123,7 +123,7 @@ Examples:
 
 Orchestration lives in Bash under [`scripts/`](scripts/) and is driven only by the Python package **`mpv_img_tricks`** (console script **`slideshow`** or **`python -m mpv_img_tricks`**). Do not rely on calling `scripts/*.sh` directly; they are backends.
 
-Live key bindings come from [`mpv-scripts/slideshow-bindings.lua`](mpv-scripts/slideshow-bindings.lua). **Syncing / diffing with `~/.config/mpv`:** [docs/setup.md](docs/setup.md#mpv-keyboard-shortcuts).
+Live key bindings come from [`mpv-scripts/slideshow-bindings.lua`](mpv-scripts/slideshow-bindings.lua). Set **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`** (non-empty) to skip loading them on all slideshow mpv launches—[full env table](docs/setup.md#environment-variables). **Syncing / diffing with `~/.config/mpv`:** [docs/setup.md](docs/setup.md#mpv-keyboard-shortcuts).
 
 ## Live Controls (slideshow bindings)
 

@@ -135,7 +135,7 @@ Total output length is roughly **(number of images after `--limit`) × duration*
 Live slideshows run **mpv** with the repo script **[`mpv-scripts/slideshow-bindings.lua`](../mpv-scripts/slideshow-bindings.lua)** (speed presets on **Alt+1**–**Alt+6**, **j**/**k** playlist, **m** keep, **Shift+Delete** trash, zoom/pan, **c** shuffle, **l** loop, etc.). That matches **README** → *Live Controls*.
 
 | Code path | How bindings load |
-|-----------|---------------------------|
+|-----------|-------------------|
 | **basic** / **chaos** | Via **`mpv-pipeline.sh`** (default **`--use-slideshow-bindings yes`**). |
 | **tile** | **`img-effects.sh`** **`run_mpv`** (same **`scripts/lib/mpv_slideshow_bindings.sh`** policy as the pipeline). |
 | **Disable bindings** | Set **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS=1`** (non-empty disables everywhere; overrides **`--use-slideshow-bindings yes`**). |

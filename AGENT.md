@@ -41,7 +41,7 @@ make test    # unit tests only
 make ci      # unit tests + scoped shellcheck (matches [.github/workflows/ci.yml](.github/workflows/ci.yml))
 ```
 
-Harness: `tests/run-unit.sh` (needs **`uv`**, **`rg`**). Assertions: **`tests/unit/*.sh`**. Optional ffmpeg smoke: [tests/manual/README.md](tests/manual/README.md).
+Harness: `tests/run-unit.sh` (needs **`uv`**, **`rg`**). Assertions: **`tests/unit/*.sh`** (includes **`mpv-pipeline-no-slideshow-bindings.sh`** for the bindings env kill switch). Optional ffmpeg smoke: [tests/manual/README.md](tests/manual/README.md).
 
 ## Conventions for changes
 

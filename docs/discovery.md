@@ -2,7 +2,7 @@
 
 Internal orientation for collaborators and future you. Summarizes repository layout, how the CLI maps to Bash backends, tests, and sensible next steps. **For install and day-to-day use, start with [setup.md](setup.md) and the repo [README](../README.md).** Prioritized improvement ideas: [recommendations.md](recommendations.md). **Backlog execution:** [plan.md](plan.md). **Dated implementation notes:** [dev-log/](dev-log/).
 
-*Last reviewed from git and tree: 2026-03-31 (includes §12 deep dive on `img-effects.sh`).*
+*Last reviewed from git and tree: 2026-03-31 (includes §12 deep dive on `img-effects.sh`, slideshow bindings policy, and unit-test inventory).*
 
 ---
 
@@ -31,6 +31,7 @@ High-level patterns from recent commits (not an exhaustive changelog):
 - **CLI:** Single **`live`** subcommand (default when omitted); default image duration **2.0 s** from `scripts/lib/constants.sh` (also sourced by **`slideshow.sh`** and **`img-effects.sh`**).
 - **Semantics:** Scale modes (`fit` / `fill` / `stretch`) wired through `scripts/mpv-pipeline.sh`; argument order handling in `slideshow.sh`.
 - **Effects / playback:** Tile and chaos paths, optional sound with trim, ffmpeg effect presets, memory/thread guarding for ffmpeg, file ordering (`natural` vs `om`), randomized tile groups and caching.
+- **mpv bindings:** Repo **`mpv-scripts/slideshow-bindings.lua`** with a single load policy in **`scripts/lib/mpv_slideshow_bindings.sh`** (shared by **`mpv-pipeline.sh`** and **`img-effects.sh`** `run_mpv`); env **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`** disables everywhere.
 - **Cursor / process:** Three-lens–style guidance may live in **global** `~/.cursor/rules`; the repo may not ship `.cursor/rules` (check git history if you expect a local copy).
 
 ---
@@ -80,7 +81,7 @@ Python **only** parses arguments and runs backends with `subprocess`. Backends o
 | `scripts/mpv-pipeline.sh` | ~500+ lines | Shared mpv invocation, scaling flags |
 | `scripts/slideshow.sh` | ~370 lines | Basic live path: discovery, playlist, watch, shuffle, instances |
 | `scripts/images-to-video.sh` | ~180+ lines | Plain image sequence → video |
-| `scripts/lib/*.sh` | small modules | `discovery`, `validate`, `pipeline`, `path`, `constants` |
+| `scripts/lib/*.sh` | small modules | `constants`, `path`, `pipeline`, `validate`, `discovery`, **`mpv_slideshow_bindings`** |
 | `mpv_img_tricks/cli.py` | ~280 lines | Args, validation, backend argv assembly |
 
 **Practical implication:** most behavior changes and regressions will touch **`img-effects.sh`**, not Python.
@@ -158,8 +159,8 @@ Full prerequisites and env vars: **[setup.md](setup.md)**.
 
 ## 10. Suggested next steps (prioritized)
 
-1. **CI:** Add a workflow: checkout → `uv sync --frozen` → `./tests/run-unit.sh` (with ripgrep available).
-2. **Docs:** README already links here under “Architecture and maintenance”; extend §12 when you change dispatch or tile behavior.
+1. **CI:** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) already runs **`make test`** (with **ripgrep**) and **`make shellcheck`** on **`main`**. Extend with extra jobs, platforms, or stricter shellcheck scope when you need them.
+2. **Docs:** README links here under “Architecture and maintenance”; extend §12 when you change dispatch or tile behavior.
 3. **Tests:** Add one focused test per fragile area you touch next (e.g. sound trim, watch) rather than boiling the ocean.
 4. **Roadmap:** Broader themes (UX, portability, `eval` removal, repo hygiene): see [recommendations.md](recommendations.md). There are no `TODO`/`FIXME` markers in-tree; track intentional follow-ups in issues or short comments near the relevant `case` branches in `img-effects.sh` if helpful.
 
@@ -301,6 +302,7 @@ Immediately after: remove **`TMPLIST`**; optional **“Play with mpv”** hint f
 ### 12.10 Cross-file relationships
 
 - **`scripts/lib/pipeline.sh`** (sourced): **`build_pipeline_common_args`**, shared between **`slideshow.sh`** and **`img-effects.sh`** live paths.
+- **`scripts/lib/mpv_slideshow_bindings.sh`**: whether to add **`--script=…/slideshow-bindings.lua`** (CLI **`--use-slideshow-bindings`** plus env **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`**); used by **`mpv-pipeline.sh`** and **`img-effects.sh`** **`run_mpv`**.
 - **`scripts/mpv-pipeline.sh`**: actual mpv launcher / multi-instance wiring consumed by **`run_live_pipeline_effect`** and **`slideshow.sh`**.
 - **`scripts/lib/validate.sh`**: shared validation helpers.
 
