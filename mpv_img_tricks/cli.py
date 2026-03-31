@@ -310,6 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Run a live slideshow by default. Add --effect to modify the live session, "
             "or add --render to export a video."
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     live_parser.add_argument("images_dir", help="Source image directory or glob")
 
@@ -338,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
             "  slideshow ~/pics --render --output out.mp4",
             "  slideshow ~/pics --render --effect glitch --output glitch.mp4",
+            "",
             f'If the first argument is not a subcommand name, "{DEFAULT_SUBCOMMAND}" '
             "is used as the default slideshow command.",
             "Optional defaults: ~/.config/mpv-img-tricks/config.json or MPV_IMG_TRICKS_CONFIG (JSON).",
