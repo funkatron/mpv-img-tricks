@@ -54,7 +54,7 @@ RECURSIVE="true"  # Whether to recurse into subdirectories (align with basic sli
 USE_PLAYLIST="false"  # Whether to use playlist file for large image sets
 RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scaling
 CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
-CACHE_VERSION="v4"  # Bump when randomized composite behavior changes
+CACHE_VERSION="v5"  # Bump when randomized composite behavior changes
 CLEAR_TOOL_CACHE="false"  # --clear-cache: rm ~/.cache/mpv-img-tricks/{ffprobe-tile-*,tile-randomized}
 JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
@@ -96,14 +96,14 @@ _mpv_img_tricks_clear_tool_caches() {
   local base="${HOME}/.cache/mpv-img-tricks"
   local removed="false"
   local d
-  for d in "${base}/ffprobe-tile-v1" "${base}/ffprobe-tile-v2" "${base}/ffprobe-tile-v3" "${base}/tile-randomized"; do
+  for d in "${base}/ffprobe-tile-v1" "${base}/ffprobe-tile-v2" "${base}/ffprobe-tile-v3" "${base}/ffprobe-tile-v4" "${base}/tile-randomized"; do
     if [[ -e "$d" ]]; then
       rm -rf "$d"
       removed="true"
     fi
   done
   if [[ "$removed" == "true" ]]; then
-    say_phase "phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 tile-randomized"
+    say_phase "phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 tile-randomized"
   else
     say_phase "phase=cache msg=cleared noop dir=${base}"
   fi
@@ -203,10 +203,12 @@ resolve_parallel_job_count_for_tile() {
   fi
 }
 
-# Hex id for ffprobe-tile-v3 cache filenames and composite manifests (stat + optional byte sample; no paths).
+# Hex id for ffprobe-tile-v4 cache filenames and composite manifests (no paths).
+# Always mix stat + MD5(first 64KiB) so files never share one cache entry on inode-0 FSes or
+# when parallel jobs would otherwise race the same cache filename; stat-only keys caused mass false skips.
 _mpv_img_tricks_media_probe_cache_key_hex() {
   local media="$1"
-  local id="" ino="" sample_hash="" h
+  local id="" sample_hash="" h
 
   if command -v stat >/dev/null 2>&1 && [[ -e "$media" ]]; then
     if ! id=$(stat -c '%d:%i:%s:%Y' "$media" 2>/dev/null); then
@@ -214,30 +216,17 @@ _mpv_img_tricks_media_probe_cache_key_hex() {
     fi
   fi
 
-  ino=""
-  if [ -n "$id" ]; then
-    ino="${id#*:}"
-    ino="${ino%%:*}"
-  fi
-
   sample_hash=""
-  if [ -z "$id" ] || [ "$ino" = "0" ]; then
-    if [[ -e "$media" ]] && [[ ! -d "$media" ]]; then
-      sample_hash=$(head -c 65536 "$media" 2>/dev/null | probe_cache_md5_hex) || sample_hash=""
-    fi
-    [ -z "$sample_hash" ] && sample_hash="_"
+  if [[ -e "$media" ]] && [[ ! -d "$media" ]]; then
+    sample_hash=$(head -c 65536 "$media" 2>/dev/null | probe_cache_md5_hex) || sample_hash=""
   fi
+  [ -z "$sample_hash" ] && sample_hash="_"
 
-  if [ -n "$sample_hash" ]; then
-    h=$(printf '%s\0%s\0%s' "ffprobe-tile-v3" "${id:-_}" "$sample_hash" | probe_cache_md5_hex)
-  else
-    h=$(printf '%s\0%s' "ffprobe-tile-v3" "${id:-_}" | probe_cache_md5_hex)
-  fi
+  h=$(printf '%s\0%s\0%s' "ffprobe-tile-v4" "${id:-_}" "$sample_hash" | probe_cache_md5_hex)
   printf '%s' "$h"
 }
 
-# Writes ok or fail to workdir/${idx}.result. Cache key avoids file paths: stat dev/inode/size/mtime,
-# plus (when inode is 0 or stat failed) MD5 of the first 64KiB to disambiguate exFAT-style trees.
+# Writes ok or fail to workdir/${idx}.result. Cache key = stat tuple + content prefix (see above).
 filter_tile_validate_one() {
   local idx="$1"
   local media="$2"
@@ -1326,7 +1315,7 @@ filter_tile_readable_inputs() {
     return 1
   fi
 
-  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v3"
+  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v4"
   if [ -n "${MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE:-}" ]; then
     CACHE_ROOT=""
   fi
