@@ -27,10 +27,11 @@ RENDER_EFFECTS = {
 }
 ALL_EFFECTS = sorted(LIVE_EFFECTS | RENDER_EFFECTS)
 
-# When this tuple has exactly one name, `main` prepends it so users may omit the subcommand
-# (e.g. `slideshow ~/pics` → `slideshow live ~/pics`). Add new names here when registering
-# additional subparsers in ``build_parser``; auto-injection turns off automatically if len != 1.
-REGISTERED_SUBCOMMANDS = ("live",)
+# ``main`` prepends DEFAULT_SUBCOMMAND when the first argv token is not a known subcommand
+# (e.g. ``slideshow ~/pics`` → ``slideshow live ~/pics``). Register every subparser name in
+# SUBCOMMAND_NAMES so flags, paths, and globs still route to the default slideshow flow.
+DEFAULT_SUBCOMMAND = "live"
+SUBCOMMAND_NAMES: frozenset[str] = frozenset({DEFAULT_SUBCOMMAND})
 
 
 def run_command(cmd: list[str]) -> int:
@@ -337,19 +338,22 @@ def build_parser() -> argparse.ArgumentParser:
             "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
             "  slideshow ~/pics --render --output out.mp4",
             "  slideshow ~/pics --render --effect glitch --output glitch.mp4",
+            f'If the first argument is not a subcommand name, "{DEFAULT_SUBCOMMAND}" '
+            "is used as the default slideshow command.",
             "Optional defaults: ~/.config/mpv-img-tricks/config.json or MPV_IMG_TRICKS_CONFIG (JSON).",
         ]
     )
     live_parser.set_defaults(handler=handle_live, parser=live_parser)
 
+    assert DEFAULT_SUBCOMMAND in SUBCOMMAND_NAMES, "default subcommand must be a registered name"
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     argv = sys.argv[1:]
-    if len(REGISTERED_SUBCOMMANDS) == 1 and argv and argv[0] != REGISTERED_SUBCOMMANDS[0]:
-        argv = [REGISTERED_SUBCOMMANDS[0], *argv]
+    if argv and argv[0] not in SUBCOMMAND_NAMES:
+        argv = [DEFAULT_SUBCOMMAND, *argv]
     args = parser.parse_args(argv)
     return args.handler(args, args.parser)
 
