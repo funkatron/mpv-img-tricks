@@ -59,6 +59,12 @@ slideshow live --help >"${WORK_DIR}/help.txt"
 assert_contains "${WORK_DIR}/help.txt" "playback/display"
 assert_contains "${WORK_DIR}/help.txt" "render/video"
 assert_contains "${WORK_DIR}/help.txt" "effect-specific"
+assert_contains "${WORK_DIR}/help.txt" "dry-run"
+
+: > "$LOG_FILE"
+slideshow live "$MEDIA_DIR" --dry-run --duration 0.01 --scale-mode fill >"${WORK_DIR}/dry.txt"
+assert_contains "${WORK_DIR}/dry.txt" "slideshow.sh"
+assert_contains "${WORK_DIR}/dry.txt" "${MEDIA_DIR}"
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null

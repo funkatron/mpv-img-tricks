@@ -48,7 +48,7 @@ GRID="2x2"  # Default grid size for tile effect
 SPACING="0"  # Pixel gap between tiles in tile effect
 GROUP_SIZE="4"  # Number of images per group for randomization
 RANDOMIZE="false"  # Whether to randomize grid layouts
-RECURSIVE="false"  # Whether to recurse into subdirectories
+RECURSIVE="true"  # Whether to recurse into subdirectories (align with basic slideshow.sh)
 USE_PLAYLIST="false"  # Whether to use playlist file for large image sets
 RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scaling
 CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
@@ -59,7 +59,10 @@ SOUND_FILE=""  # Optional sound file during slideshow playback
 SOUND_TRIM_DB="-45"  # Leading silence trim threshold in dB
 MAX_FILES=""  # Optional cap on discovered images
 FILE_ORDER="natural"  # natural (sort -V) or om (oldest mtime first)
-FFMPEG_MEM_ARGS="-threads 1 -filter_threads 1 -filter_complex_threads 1"  # Keep ffmpeg memory usage predictable
+FFMPEG_MEM_ARR=(-threads 1 -filter_threads 1 -filter_complex_threads 1)  # Keep ffmpeg memory usage predictable
+QUIET="false"
+VERBOSE_FFMPEG="false"
+PHASE_PREFIX="mpv-img-tricks:"
 BACKGROUND_AUDIO_PID=""  # Background mpv PID for continuous tile audio
 PREPARED_SOUND_FILE=""  # Resolved/processed sound file path used at runtime
 TEMP_SOUND_FILE=""  # Temp trimmed sound file for cleanup
@@ -76,6 +79,32 @@ TILE_VIDEO_ENCODER_OVERRIDE="auto"  # auto|hevc_videotoolbox|libx265|libx264
 TILE_VIDEO_ENCODER_READY="false"  # Whether animated tile encoder preference was initialized
 TILE_VIDEO_ENCODER_NAME=""  # Selected encoder name for animated tile composites
 TILE_VIDEO_CODEC_ARGS=()  # ffmpeg codec args for animated tile composites
+FF_EFFECT_INPUTS=()  # Populated before run_ffmpeg_effect_hevc (bash 3.x safe; no nameref)
+
+say_phase() {
+  if [[ "$QUIET" == "true" ]]; then
+    return 0
+  fi
+  printf '%s %s\n' "$PHASE_PREFIX" "$*" >&2
+}
+
+run_under_nice() {
+  if nice -n 10 true 2>/dev/null; then
+    nice -n 10 "$@"
+  else
+    "$@"
+  fi
+}
+
+run_composite_ffmpeg() {
+  local logl=error
+  local stats=()
+  if [[ "$VERBOSE_FFMPEG" == "true" || "$DEBUG" == "true" ]]; then
+    logl=info
+    stats=(-stats)
+  fi
+  run_under_nice ffmpeg -nostdin -loglevel "$logl" "${stats[@]}" -threads 1 "$@"
+}
 
 # Parse command line arguments
 shift  # Remove effect from arguments
@@ -219,6 +248,14 @@ while [[ $# -gt 0 ]]; do
       DEBUG="true"
       shift
       ;;
+    --quiet)
+      QUIET="true"
+      shift
+      ;;
+    --verbose-ffmpeg)
+      VERBOSE_FFMPEG="true"
+      shift
+      ;;
     --instances|-n)
       if [[ "$1" == *"="* ]]; then
         MPV_INSTANCES="${1#*=}"
@@ -279,6 +316,10 @@ while [[ $# -gt 0 ]]; do
       CACHE_COMPOSITES="false"
       shift
       ;;
+    --no-recursive)
+      RECURSIVE="false"
+      shift
+      ;;
     --recursive|-R)
       RECURSIVE="true"
       shift
@@ -318,7 +359,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --master-control   Enable master->follower sync for multi-instance"
       echo "  --no-master-control Disable master->follower sync for multi-instance"
       echo "  --randomize, -z  Randomize grid layouts for each group"
-      echo "  --recursive, -R  Recurse into subdirectories"
+      echo "  --recursive, -R  Recurse into subdirectories (default: on)"
+      echo "  --no-recursive    Only scan the top-level directory for images"
       echo "  --no-cache       Rebuild randomized tile composites (default: cache enabled)"
       echo "  --animate-videos Render animated tile clips (mp4) instead of still composites"
       echo "  --encoder NAME   Animated tile encoder: auto|hevc_videotoolbox|libx265|libx264"
@@ -491,6 +533,7 @@ if [ ! -s "$TMPLIST" ]; then
 fi
 
 TOTAL=$(wc -l < "$TMPLIST")
+say_phase "phase=discover effect=${EFFECT} playlist_lines=${TOTAL}"
 echo "Processing $TOTAL images with '$EFFECT' effect..."
 
 create_random_scale_script() {
@@ -603,7 +646,7 @@ chaos_effect() {
 ken_burns_effect() {
   local out="${OUTPUT:-ken-burns.mp4}"
   local input_list
-  echo "Creating Ken Burns effect video..."
+  say_phase "phase=ken-burns msg=creating_video"
   input_list="$(get_limited_video_list "Ken Burns")"
 
   # Parse resolution
@@ -611,14 +654,14 @@ ken_burns_effect() {
   HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
     PAN_X=$((RANDOM % 200 - 100))
     PAN_Y=$((RANDOM % 200 - 100))
     FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},zoompan=z='min(zoom+0.0015,1.3)':d=${DURATION}*${FPS}:x='iw/2-(iw/zoom/2)+${PAN_X}':y='ih/2-(ih/zoom/2)+${PAN_Y}':s=${WIDTH}x${HEIGHT}[v${i}];"
-    INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
+    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -629,7 +672,8 @@ ken_burns_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 15M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "Ken Burns video created: $out"
   rm -f "$input_list"
 }
@@ -637,11 +681,11 @@ ken_burns_effect() {
 glitch_effect() {
   local out="${OUTPUT:-glitch.mp4}"
   local input_list
-  echo "Creating glitch effect video..."
+  say_phase "phase=glitch msg=creating_video"
   input_list="$(get_limited_video_list "Glitch")"
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
@@ -651,7 +695,7 @@ glitch_effect() {
       1) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[g1][g2];[g1]hue=h=0:s=0[g1];[g2]hue=h=180:s=2[g2];[g1][g2]blend=all_mode=difference[v${i}];" ;;
       2) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=120:s=2:b=0.5[v${i}];" ;;
     esac
-    INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
+    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -662,7 +706,8 @@ glitch_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 15M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "Glitch video created: $out"
   rm -f "$input_list"
 }
@@ -670,11 +715,11 @@ glitch_effect() {
 acid_effect() {
   local out="${OUTPUT:-acid-trip.mp4}"
   local input_list
-  echo "Creating acid trip video..."
+  say_phase "phase=acid msg=creating_video"
   input_list="$(get_limited_video_list "Acid")"
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
@@ -684,7 +729,7 @@ acid_effect() {
       1) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=120:s=2:b=1.2[v${i}];" ;;
       2) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=240:s=2.5:b=0.8[v${i}];" ;;
     esac
-    INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
+    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -695,7 +740,8 @@ acid_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 15M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 15M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "Acid trip video created: $out"
   rm -f "$input_list"
 }
@@ -703,11 +749,11 @@ acid_effect() {
 reality_effect() {
   local out="${OUTPUT:-reality-break.mp4}"
   local input_list
-  echo "Breaking reality..."
+  say_phase "phase=reality msg=creating_video"
   input_list="$(get_limited_video_list "Reality")"
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
@@ -718,7 +764,7 @@ reality_effect() {
       2) FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[r1][r2][r3][r4];[r1]hue=h=0[r1];[r2]hue=h=90[r2];[r3]hue=h=180[r3];[r4]hue=h=270[r4];[r1][r2]blend=all_mode=addition[r12];[r3][r4]blend=all_mode=addition[r34];[r12][r34]blend=all_mode=difference[v${i}];" ;;
       3) FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[r1][r2];[r1]hue=h=0:s=2[r1];[r2]hue=h=180:s=2[r2];[r1][r2]blend=all_mode=difference[v${i}];" ;;
     esac
-    INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
+    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -729,7 +775,8 @@ reality_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 25M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 25M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "Reality broken: $out"
   rm -f "$input_list"
 }
@@ -737,17 +784,17 @@ reality_effect() {
 kaleido_effect() {
   local out="${OUTPUT:-kaleido.mp4}"
   local input_list
-  echo "Creating INTENSE kaleidoscope patterns..."
+  say_phase "phase=kaleido msg=creating_video"
   input_list="$(get_limited_video_list "Kaleido")"
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
     # SUPER INTENSE kaleidoscope effect with dramatic hue rotation, high saturation, and brightness
     FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},setsar=1,hue=h=t*180:s=8:b=3.0,eq=contrast=2.0:brightness=0.3:saturation=3.0[v${i}];"
-    INPUTS="${INPUTS}-loop 1 -t 0.5 -stream_loop 1 -i \"${img}\" "
+    ff_in+=(-loop 1 -t 0.5 -stream_loop 1 -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -758,7 +805,8 @@ kaleido_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 18M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 18M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "INTENSE Kaleidoscope video created: $out"
   rm -f "$input_list"
 }
@@ -766,16 +814,16 @@ kaleido_effect() {
 matrix_effect() {
   local out="${OUTPUT:-matrix.mp4}"
   local input_list
-  echo "Entering the Matrix..."
+  say_phase "phase=matrix msg=creating_video"
   input_list="$(get_limited_video_list "Matrix")"
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
     FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[m1][m2];[m1]hue=h=120:s=1:b=0.3[m1];[m2]hue=h=0:s=0:b=1[m2];[m1][m2]blend=all_mode=screen[v${i}];"
-    INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
+    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -786,7 +834,8 @@ matrix_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 16M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 16M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "Matrix video created: $out"
   rm -f "$input_list"
 }
@@ -794,16 +843,16 @@ matrix_effect() {
 liquid_effect() {
   local out="${OUTPUT:-liquid.mp4}"
   local input_list
-  echo "Creating liquid distortion..."
+  say_phase "phase=liquid msg=creating_video"
   input_list="$(get_limited_video_list "Liquid")"
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
     FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[l1][l2][l3];[l1]hue=h=45:s=1.5[l1];[l2]hue=h=135:s=1.5[l2];[l3]hue=h=225:s=1.5[l3];[l1][l2]blend=all_mode=addition[l12];[l12][l3]blend=all_mode=addition[v${i}];"
-    INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
+    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -814,13 +863,14 @@ liquid_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 17M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 17M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "Liquid video created: $out"
   rm -f "$input_list"
 }
 
 tile_effect() {
-  echo "Creating live tiled slideshow with mpv..."
+  say_phase "phase=tile msg=start animate=${ANIMATE_VIDEOS}"
   if [ "$ANIMATE_VIDEOS" = "true" ]; then
     configure_tile_video_encoder
   fi
@@ -874,8 +924,8 @@ build_audio_args() {
 
 build_video_audio_args() {
   local audio_input_index="$1"
-  VIDEO_AUDIO_INPUTS=""
-  VIDEO_AUDIO_OUTPUT_OPTS="-an"
+  VIDEO_A_EXTRA=()
+  VIDEO_MAP_EXTRA=(-an)
   if [ -n "$SOUND_FILE" ]; then
     prepare_sound_file
     local audio_path="$PREPARED_SOUND_FILE"
@@ -883,9 +933,24 @@ build_video_audio_args() {
       echo "Sound file not playable: $SOUND_FILE"
       return 1
     fi
-    VIDEO_AUDIO_INPUTS="-stream_loop -1 -i \"$audio_path\""
-    VIDEO_AUDIO_OUTPUT_OPTS="-map ${audio_input_index}:a -c:a aac -b:a 192k -shortest"
+    VIDEO_A_EXTRA=(-stream_loop -1 -i "$audio_path")
+    VIDEO_MAP_EXTRA=(-map "${audio_input_index}:a" -c:a aac -b:a 192k -shortest)
   fi
+}
+
+# Uses global FF_EFFECT_INPUTS (populate with ff_in copies before calling).
+run_ffmpeg_effect_hevc() {
+  local out="$1" br="$2" fcx="$3"
+  local logl=error
+  local stats=()
+  if [[ "$VERBOSE_FFMPEG" == "true" || "$DEBUG" == "true" ]]; then
+    logl=info
+    stats=(-stats)
+  fi
+  ffmpeg -nostdin -loglevel "$logl" "${stats[@]}" "${FFMPEG_MEM_ARR[@]}" "${FF_EFFECT_INPUTS[@]}" "${VIDEO_A_EXTRA[@]}" \
+    -filter_complex "$fcx" \
+    -map "[out]" -c:v hevc_videotoolbox -tag:v hvc1 -b:v "$br" -pix_fmt yuv420p \
+    "${VIDEO_MAP_EXTRA[@]}" -r "$FPS" -y "$out"
 }
 
 get_limited_video_list() {
@@ -913,6 +978,8 @@ prepare_sound_file() {
   if ! command -v ffmpeg >/dev/null 2>&1; then
     return 0
   fi
+
+  say_phase "phase=prepare-audio msg=silence_trim"
 
   TEMP_SOUND_FILE="$(mktemp "${TMPDIR:-/tmp}/mpv-img-tricks-sound.XXXXXX")"
   if ffmpeg -nostdin -loglevel error -y \
@@ -1008,6 +1075,7 @@ detect_screen_resolution() {
 
   if [ -z "$detected" ]; then
     detected="$RESOLUTION"
+    say_phase "phase=screen msg=no_display_probe using_resolution=${RESOLUTION}"
   fi
 
   SCREEN_RES="$detected"
@@ -1021,11 +1089,16 @@ filter_tile_readable_inputs() {
   local kept=0
   local skipped=0
   local filtered_list
+  local total_lines
 
   if ! command -v ffprobe >/dev/null 2>&1; then
+    say_phase "phase=validate-media msg=ffprobe_missing skipping_probe=true"
     echo "ffprobe not found; skipping tile media validation."
     return 0
   fi
+
+  total_lines=$(wc -l < "$input_list" | tr -d ' ')
+  say_phase "phase=validate-media msg=ffprobe_scan total_candidates=${total_lines}"
 
   filtered_list="$(mktemp)"
   TILE_SKIP_LOG="$(mktemp)"
@@ -1033,6 +1106,9 @@ filter_tile_readable_inputs() {
   while IFS= read -r media; do
     [ -n "$media" ] || continue
     checked=$((checked + 1))
+    if [ $((checked % 25)) -eq 0 ] || [ "$checked" -eq 1 ]; then
+      say_phase "phase=validate-media progress=${checked}/${total_lines}"
+    fi
     if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$media" >/dev/null 2>&1; then
       echo "$media" >> "$filtered_list"
       kept=$((kept + 1))
@@ -1043,6 +1119,8 @@ filter_tile_readable_inputs() {
   done < "$input_list"
 
   mv "$filtered_list" "$input_list"
+
+  say_phase "phase=validate-media msg=complete kept=${kept} skipped=${skipped} checked=${checked}"
 
   if [ "$kept" -eq 0 ]; then
     echo "No readable media remained for tile effect."
@@ -1092,6 +1170,8 @@ configure_tile_video_encoder() {
   if [ "$TILE_VIDEO_ENCODER_READY" = "true" ]; then
     return 0
   fi
+
+  say_phase "phase=probe-encoders msg=list_ffmpeg_encoders"
 
   TILE_VIDEO_CODEC_ARGS=()
   TILE_VIDEO_ENCODER_NAME=""
@@ -1186,7 +1266,7 @@ tile_effect_fixed() {
   # Spacing requires precomposite rendering path; live lavfi fast path does not
   # support flexible gaps without significantly more complex graph generation.
   if [ "$INPUT_COUNT" -gt "$TILE_COUNT" ] || [ "$SPACING" -gt 0 ]; then
-    echo "Fixed grid slideshow mode: building composites across all images..."
+    say_phase "phase=compositing-fixed msg=pre_render_composites images=${INPUT_COUNT} grid_tiles=${TILE_COUNT}"
     COMPOSITE_DIR="$(mktemp -d)"
     ALL_IMAGES=()
     while IFS= read -r img; do
@@ -1238,7 +1318,7 @@ tile_effect_fixed() {
       local filter="$2"
       shift 2
       if [ "$ANIMATE_VIDEOS" = "true" ]; then
-        nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+        run_composite_ffmpeg \
           "$@" \
           -filter_complex "$filter" \
           -map "[out]" \
@@ -1248,7 +1328,7 @@ tile_effect_fixed() {
           "${TILE_VIDEO_CODEC_ARGS[@]}" \
           "$out_file"
       else
-        nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+        run_composite_ffmpeg \
           "$@" \
           -filter_complex "$filter" \
           -map "[out]" \
@@ -1311,6 +1391,10 @@ tile_effect_fixed() {
       cursor=$((cursor + TILE_COUNT))
       printf "\rCompositing fixed tiles... queued: %d | done: %d | images: %d/%d   " \
         "$slide" "$completed_jobs" "$cursor" "$total_images"
+      if [[ "$QUIET" != "true" ]] && { [[ ! -t 2 ]] || [[ $((slide % 5)) -eq 0 ]]; }; then
+        printf '\nmpv-img-tricks: phase=compositing-fixed slide=%s done=%s images=%s/%s\n' \
+          "$slide" "$completed_jobs" "$cursor" "$total_images" >&2
+      fi
     done
 
     for pid in "${ACTIVE_PIDS[@]}"; do
@@ -1654,7 +1738,7 @@ tile_effect_randomized() {
     shift 2
     # Use one ffmpeg thread per job to avoid oversubscribing CPUs.
     if [ "$ANIMATE_VIDEOS" = "true" ]; then
-      nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+      run_composite_ffmpeg \
         "$@" \
         -filter_complex "$filter" \
         -map "[out]" \
@@ -1664,7 +1748,7 @@ tile_effect_randomized() {
         "${TILE_VIDEO_CODEC_ARGS[@]}" \
         "$out_file"
     else
-      nice -n 10 ffmpeg -nostdin -loglevel error -threads 1 \
+      run_composite_ffmpeg \
         "$@" \
         -filter_complex "$filter" \
         -map "[out]" \
@@ -1674,6 +1758,7 @@ tile_effect_randomized() {
     fi
   }
 
+  say_phase "phase=compositing-randomized msg=start estimated_slides=${min_possible_slides}-${max_possible_slides} jobs=${PARALLEL_JOBS}"
   echo "Compositing randomized tiled slides..."
   echo "Estimated slide range: ${min_possible_slides}-${max_possible_slides}"
   echo "Using ${PARALLEL_JOBS} render job(s) on ${CPU_COUNT} CPU core(s)"
@@ -1780,6 +1865,10 @@ tile_effect_randomized() {
     slide=$((slide + 1))
     printf "\rCompositing... queued: %d | done: %d | images: %d/%d | layout: %s   " \
       "$slide" "$completed_jobs" "$cursor" "$total_images" "$picked_layout"
+    if [[ "$QUIET" != "true" ]] && { [[ ! -t 2 ]] || [[ $((slide % 5)) -eq 0 ]]; }; then
+      printf '\nmpv-img-tricks: phase=compositing-randomized slide=%s done=%s images=%s/%s layout=%s\n' \
+        "$slide" "$completed_jobs" "$cursor" "$total_images" "$picked_layout" >&2
+    fi
 
     if [ $((slide % MEM_SAMPLE_INTERVAL)) -eq 0 ]; then
       SELF_RSS_KB=$(get_rss_kb "$$")
@@ -1845,16 +1934,16 @@ tile_effect_randomized() {
 crossfade_effect() {
   local out="${OUTPUT:-crossfade.mp4}"
   local input_list
-  echo "Creating crossfade transitions..."
+  say_phase "phase=crossfade msg=creating_video"
   input_list="$(get_limited_video_list "Crossfade")"
 
   FILTER=""
-  INPUTS=""
+  local -a ff_in=()
   i=0
 
   while IFS= read -r img; do
     FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION}[v${i}];"
-    INPUTS="${INPUTS}-loop 1 -t ${DURATION} -i \"${img}\" "
+    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
 
@@ -1871,7 +1960,8 @@ crossfade_effect() {
   CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
 
   build_video_audio_args "$i" || return 1
-  eval "ffmpeg ${FFMPEG_MEM_ARGS} ${INPUTS} ${VIDEO_AUDIO_INPUTS} -filter_complex \"${FILTER}${CONCAT_FILTER}\" -map \"[out]\" -c:v hevc_videotoolbox -tag:v hvc1 -b:v 12M -pix_fmt yuv420p ${VIDEO_AUDIO_OUTPUT_OPTS} -r ${FPS} -y \"${out}\""
+  FF_EFFECT_INPUTS=("${ff_in[@]}")
+  run_ffmpeg_effect_hevc "$out" 12M "${FILTER}${CONCAT_FILTER}" || return 1
   echo "Crossfade video created: $out"
   rm -f "$input_list"
 }

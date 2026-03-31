@@ -6,10 +6,12 @@ Argument parsing lives here; execution delegates to Bash backends under ``script
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 import sys
 from argparse import Namespace
 
+from mpv_img_tricks.config import live_subparser_defaults, load_config
 from mpv_img_tricks.paths import get_scripts_dir
 
 LIVE_EFFECTS = {"basic", "chaos", "tile"}
@@ -57,6 +59,11 @@ def add_live_only_args(parser: argparse.ArgumentParser) -> None:
         help="Disable recursive watch mode",
     )
     parser.add_argument("--shuffle", action="store_true", help="Shuffle playlist order")
+    parser.add_argument(
+        "--no-recursive-images",
+        action="store_true",
+        help="When collecting images for basic live, only scan the top directory (no subfolders)",
+    )
 
 
 def add_render_args(parser: argparse.ArgumentParser) -> None:
@@ -99,7 +106,13 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
         choices=["natural", "om"],
         help="File ordering mode",
     )
-    parser.add_argument("--recursive", action="store_true", help="Recurse into subdirectories")
+    parser.add_argument("--recursive", action="store_true", help="Recurse into subdirectories when discovering images")
+    parser.add_argument(
+        "--no-subdirs",
+        dest="effect_no_recursive",
+        action="store_true",
+        help="For tile/chaos/render effects, only scan the top-level directory (default: recurse into subfolders)",
+    )
     parser.add_argument(
         "--random-scale",
         action="store_true",
@@ -107,8 +120,23 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_debug_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--debug", action="store_true", help="Print backend debug info")
+def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--debug", action="store_true", help="Print backend debug info (shell trace in img-effects)")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress/chatter on stderr from backends (errors still print)",
+    )
+    parser.add_argument(
+        "--verbose-ffmpeg",
+        action="store_true",
+        help="Louder ffmpeg logging for compositing and video effects",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the backend argv and exit without running mpv/ffmpeg",
+    )
 
 
 def append_if_value(cmd: list[str], flag: str, value: object | None) -> None:
@@ -120,6 +148,12 @@ def append_if_value(cmd: list[str], flag: str, value: object | None) -> None:
 def append_if_true(cmd: list[str], flag: str, enabled: bool) -> None:
     if enabled:
         cmd.append(flag)
+
+
+def append_diagnostic(cmd: list[str], args: Namespace) -> None:
+    append_if_true(cmd, "--debug", args.debug)
+    append_if_true(cmd, "--quiet", args.quiet)
+    append_if_true(cmd, "--verbose-ffmpeg", args.verbose_ffmpeg)
 
 
 def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None:
@@ -141,6 +175,9 @@ def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None
     if args.no_recursive and args.render:
         parser.error("--no-recursive cannot be combined with --render")
 
+    if args.recursive and getattr(args, "effect_no_recursive", False):
+        parser.error("choose either --recursive or --no-subdirs for effect discovery, not both")
+
 
 def build_live_backend_command(args: Namespace) -> list[str]:
     scripts = get_scripts_dir()
@@ -157,7 +194,8 @@ def build_live_backend_command(args: Namespace) -> list[str]:
         append_if_true(cmd, "--shuffle", args.shuffle)
         append_if_true(cmd, "--watch", args.watch)
         append_if_true(cmd, "--no-recursive", args.no_recursive)
-        append_if_true(cmd, "--debug", args.debug)
+        append_if_true(cmd, "--no-recursive-images", args.no_recursive_images)
+        append_diagnostic(cmd, args)
         return cmd
 
     cmd = [str(scripts / "img-effects.sh"), effect, args.images_dir]
@@ -169,7 +207,7 @@ def build_live_backend_command(args: Namespace) -> list[str]:
     append_if_value(cmd, "--display-map", args.display_map)
     append_if_true(cmd, "--master-control", args.master_control)
     append_if_true(cmd, "--no-master-control", args.no_master_control)
-    append_if_true(cmd, "--debug", args.debug)
+    append_diagnostic(cmd, args)
 
     if effect == "tile":
         append_if_value(cmd, "--grid", args.grid)
@@ -182,8 +220,17 @@ def build_live_backend_command(args: Namespace) -> list[str]:
         append_if_value(cmd, "--sound-trim-db", args.sound_trim_db)
         append_if_value(cmd, "--max-files", args.max_files)
         append_if_value(cmd, "--order", args.order)
-        append_if_true(cmd, "--recursive", args.recursive)
+        if getattr(args, "effect_no_recursive", False):
+            append_if_true(cmd, "--no-recursive", True)
+        else:
+            append_if_true(cmd, "--recursive", args.recursive)
         append_if_true(cmd, "--random-scale", args.random_scale)
+
+    if effect == "chaos":
+        if getattr(args, "effect_no_recursive", False):
+            append_if_true(cmd, "--no-recursive", True)
+        else:
+            append_if_true(cmd, "--recursive", args.recursive)
 
     return cmd
 
@@ -197,7 +244,7 @@ def build_plain_render_command(args: Namespace) -> list[str]:
         args.resolution,
         args.output or "flipbook.mp4",
     ]
-    append_if_true(cmd, "--debug", args.debug)
+    append_diagnostic(cmd, args)
     return cmd
 
 
@@ -212,14 +259,28 @@ def build_effect_render_command(args: Namespace) -> list[str]:
     append_if_value(cmd, "--sound-trim-db", args.sound_trim_db)
     append_if_value(cmd, "--max-files", args.max_files)
     append_if_value(cmd, "--order", args.order)
-    append_if_true(cmd, "--recursive", args.recursive)
+    if getattr(args, "effect_no_recursive", False):
+        append_if_true(cmd, "--no-recursive", True)
+    else:
+        append_if_true(cmd, "--recursive", args.recursive)
     append_if_true(cmd, "--random-scale", args.random_scale)
-    append_if_true(cmd, "--debug", args.debug)
+    append_diagnostic(cmd, args)
     return cmd
 
 
 def handle_live(args: Namespace, parser: argparse.ArgumentParser) -> int:
     validate_live_args(args, parser)
+
+    if args.dry_run:
+        if args.render:
+            if args.effect:
+                cmd = build_effect_render_command(args)
+            else:
+                cmd = build_plain_render_command(args)
+        else:
+            cmd = build_live_backend_command(args)
+        print(shlex.join(cmd))
+        return 0
 
     if args.render:
         if args.effect:
@@ -257,7 +318,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_effect_args(effects)
 
     diagnostics = live_parser.add_argument_group("diagnostics")
-    add_debug_args(diagnostics)
+    add_diagnostic_args(diagnostics)
+
+    cfg = load_config()
+    live_parser.set_defaults(**live_subparser_defaults(cfg))
 
     live_parser.epilog = "\n".join(
         [
@@ -267,6 +331,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
             "  slideshow live ~/pics --render --output out.mp4",
             "  slideshow live ~/pics --render --effect glitch --output glitch.mp4",
+            "Optional defaults: ~/.config/mpv-img-tricks/config.json or MPV_IMG_TRICKS_CONFIG (JSON).",
         ]
     )
     live_parser.set_defaults(handler=handle_live, parser=live_parser)

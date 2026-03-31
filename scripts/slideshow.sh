@@ -30,6 +30,8 @@ DISPLAY_INDEX=""
 DISPLAY_MAP=""
 MASTER_CONTROL="auto"
 DEBUG_MODE="false"
+QUIET_MODE="false"
+DISCOVER_RECURSIVE="true"
 
 # Parse arguments (support both option-first and dir-first styles).
 while [[ $# -gt 0 ]]; do
@@ -114,6 +116,18 @@ while [[ $# -gt 0 ]]; do
       DEBUG_MODE="true"
       shift
       ;;
+    --quiet)
+      QUIET_MODE="true"
+      shift
+      ;;
+    --verbose-ffmpeg)
+      # Accepted for parity with img-effects; slideshow does not invoke ffmpeg directly.
+      shift
+      ;;
+    --no-recursive-images)
+      DISCOVER_RECURSIVE="false"
+      shift
+      ;;
     --help|-h)
       echo "Usage: $0 [options] <image_dir>"
       echo ""
@@ -136,6 +150,9 @@ while [[ $# -gt 0 ]]; do
       echo "  --master-control          Force master/follower control sync for multi-instance"
       echo "  --no-master-control       Disable master/follower control sync for multi-instance"
       echo "  --debug                   Print resolved canonical runner args"
+      echo "  --quiet                   Suppress decorative status output"
+      echo "  --verbose-ffmpeg          Accepted for CLI parity (no-op here)"
+      echo "  --no-recursive-images     Only scan the top-level directory for images (no subfolders)"
       echo ""
       echo "Examples:"
       echo "  $0 ~/pics --upscale-smaller --scale-mode fill"
@@ -161,8 +178,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Set default directory if omitted.
-DIR="${DIR:-dead-agent-images/}"
+# Image directory required unless overridden for personal automation.
+if [[ -z "$DIR" ]]; then
+  if [[ -n "${MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR:-}" ]]; then
+    DIR="${MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR}"
+  else
+    echo "Error: image directory required (positional argument or MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR)." >&2
+    exit 1
+  fi
+fi
 
 # Expand tilde if present
 DIR="${DIR/#\~/$HOME}"
@@ -173,17 +197,19 @@ if [[ ! -d "$DIR" ]]; then
   exit 1
 fi
 
-echo "🎸 FLEXIBLE IMAGE BLAST"
-echo "📁 Directory: $DIR"
-echo "⏱️  Duration: ${DURATION}s per image"
-echo "🔍 Upscale smaller: $UPSCALE_SMALLER"
-echo "📐 Scale mode: $SCALE_MODE"
-echo "📉 Downscale larger: $DOWNSCALE_LARGER"
-echo "🧩 Instances: $INSTANCES"
-if [[ -n "$DISPLAY_INDEX" ]]; then
-  echo "🖥️  Display: $DISPLAY_INDEX"
+if [[ "$QUIET_MODE" != "true" ]]; then
+  echo "🎸 FLEXIBLE IMAGE BLAST"
+  echo "📁 Directory: $DIR"
+  echo "⏱️  Duration: ${DURATION}s per image"
+  echo "🔍 Upscale smaller: $UPSCALE_SMALLER"
+  echo "📐 Scale mode: $SCALE_MODE"
+  echo "📉 Downscale larger: $DOWNSCALE_LARGER"
+  echo "🧩 Instances: $INSTANCES"
+  if [[ -n "$DISPLAY_INDEX" ]]; then
+    echo "🖥️  Display: $DISPLAY_INDEX"
+  fi
+  echo ""
 fi
-echo ""
 
 # Resolve canonical runner path even when script is symlinked.
 RESOLVED_SOURCE="$(resolve_script_path "$SCRIPT_SOURCE")"
@@ -196,7 +222,7 @@ fi
 # Check if directory exists
 # Find images and create a temporary playlist file
 TMPLIST="$(mktemp)"
-discover_images_to_playlist "$DIR" "$TMPLIST" "true"
+discover_images_to_playlist "$DIR" "$TMPLIST" "$DISCOVER_RECURSIVE"
 
 if [[ ! -s "$TMPLIST" ]]; then
   echo "Error: no images found in $DIR" >&2
@@ -205,7 +231,9 @@ if [[ ! -s "$TMPLIST" ]]; then
 fi
 
 COUNT=$(wc -l < "$TMPLIST")
-echo "📸 Found $COUNT images"
+if [[ "$QUIET_MODE" != "true" ]]; then
+  echo "📸 Found $COUNT images"
+fi
 
 # Set up IPC socket for watch mode
 IPC_SOCKET=""
@@ -219,8 +247,10 @@ if [[ "$WATCH_MODE" == "true" ]]; then
   echo "👁️  Watch mode enabled (recursive: $RECURSIVE_WATCH)"
 fi
 
-echo "🚀 Starting slideshow..."
-echo ""
+if [[ "$QUIET_MODE" != "true" ]]; then
+  echo "🚀 Starting slideshow..."
+  echo ""
+fi
 
 build_pipeline_common_args "$DURATION" "yes" "playlist" "$SCALE_MODE" "$INSTANCES" "$MASTER_CONTROL"
 PIPELINE_ARGS=(

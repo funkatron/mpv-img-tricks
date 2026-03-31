@@ -1,8 +1,11 @@
 version = 1
-revision = 2
+revision = 1
 requires-python = ">=3.11"
 
 [[package]]
 name = "mpv-img-tricks"
 version = "0.1.0"
 source = { editable = "." }
+
+[package.metadata]
+provides-extras = ["dev"]

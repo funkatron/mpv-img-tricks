@@ -41,6 +41,7 @@ touch "${MEDIA_DIR}/a.mov" "${MEDIA_DIR}/b.mov"
 
 FFMPEG_LOG="${WORK_DIR}/ffmpeg.log"
 MPV_LOG="${WORK_DIR}/mpv.log"
+PHASE_LOG="${WORK_DIR}/phase.log"
 export FFMPEG_LOG MPV_LOG
 
 cat > "${BIN_DIR}/ffprobe" <<'EOF'
@@ -80,8 +81,9 @@ export PATH="${BIN_DIR}:$PATH"
 # Animated mode should emit video composites and ffmpeg video segment args.
 bash "$SCRIPT_PATH" tile "${MEDIA_DIR}/*.mov" \
   --randomize --group-size 2 --max-files 2 \
-  --duration 0.2 --fps 12 --animate-videos --no-cache >/dev/null
+  --duration 0.2 --fps 12 --animate-videos --no-cache >"$PHASE_LOG" 2>&1
 
+assert_contains "$PHASE_LOG" "mpv-img-tricks: phase="
 assert_contains "$FFMPEG_LOG" "-t 0.2"
 assert_contains "$FFMPEG_LOG" "-c:v hevc_videotoolbox"
 assert_not_contains "$FFMPEG_LOG" "-frames:v 1"

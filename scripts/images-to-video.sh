@@ -92,6 +92,10 @@ while [[ $# -gt 0 ]]; do
       DEBUG_MODE="true"
       shift
       ;;
+    --quiet|--verbose-ffmpeg)
+      # Accepted from Python CLI for diagnostic parity; plain render path ignores beyond --debug.
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
