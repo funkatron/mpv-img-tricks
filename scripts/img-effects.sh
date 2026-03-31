@@ -109,6 +109,107 @@ run_composite_ffmpeg() {
   run_under_nice ffmpeg -nostdin -loglevel "$logl" "${stats[@]}" -threads 1 "$@"
 }
 
+# ffprobe for tile validate-media: same nice + single thread pattern as composite ffmpeg.
+run_ffprobe_probe_tile_validate() {
+  local media="$1"
+  run_under_nice ffprobe -nostdin -v error -threads 1 \
+    -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$media" >/dev/null 2>&1
+}
+
+probe_cache_sha256_hex() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 2>/dev/null | awk '{print $1}'
+  fi
+}
+
+# Sets globals CPU_COUNT and PARALLEL_JOBS from JOBS (same rule as tile compositing).
+resolve_parallel_job_count_for_tile() {
+  CPU_COUNT=1
+  if command -v sysctl >/dev/null 2>&1; then
+    CPU_COUNT=$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+  elif command -v nproc >/dev/null 2>&1; then
+    CPU_COUNT=$(nproc 2>/dev/null || echo 1)
+  fi
+  if [ -z "$CPU_COUNT" ] || [ "$CPU_COUNT" -lt 1 ]; then
+    CPU_COUNT=1
+  fi
+  if [ "$JOBS" = "auto" ]; then
+    PARALLEL_JOBS=$((CPU_COUNT / 2))
+    if [ "$PARALLEL_JOBS" -lt 1 ]; then
+      PARALLEL_JOBS=1
+    fi
+  elif [[ "$JOBS" =~ ^[0-9]+$ ]] && [ "$JOBS" -ge 1 ]; then
+    PARALLEL_JOBS="$JOBS"
+  else
+    echo "Invalid --jobs value '$JOBS'; using auto."
+    PARALLEL_JOBS=$((CPU_COUNT / 2))
+    if [ "$PARALLEL_JOBS" -lt 1 ]; then
+      PARALLEL_JOBS=1
+    fi
+  fi
+  MAX_PARALLEL_JOBS=$((CPU_COUNT / 2))
+  if [ "$MAX_PARALLEL_JOBS" -lt 1 ]; then
+    MAX_PARALLEL_JOBS=1
+  fi
+  if [ "$PARALLEL_JOBS" -gt "$MAX_PARALLEL_JOBS" ]; then
+    PARALLEL_JOBS="$MAX_PARALLEL_JOBS"
+  fi
+}
+
+# Writes ok or fail to workdir/${idx}.result; caches by stat identity under cache_root.
+filter_tile_validate_one() {
+  local idx="$1"
+  local media="$2"
+  local workdir="$3"
+  local cache_root="$4"
+  local id="" h cfile res tmpf
+
+  if command -v stat >/dev/null 2>&1 && [[ -e "$media" ]]; then
+    if ! id=$(stat -c '%d:%i:%s:%Y' "$media" 2>/dev/null); then
+      id=$(stat -f '%d:%i:%z:%m' "$media" 2>/dev/null || true)
+    fi
+  fi
+
+  if [ -n "$id" ] && [ -n "$cache_root" ]; then
+    h=$(printf '%s|%s' "ffprobe-tile-v1" "$id" | probe_cache_sha256_hex)
+    cfile="${cache_root}/${h}"
+    if [ -f "$cfile" ]; then
+      res=$(tr -d '\n' <"$cfile")
+      printf '%s\n' "$res" >"${workdir}/${idx}.result"
+      return 0
+    fi
+  else
+    cfile=""
+  fi
+
+  if run_ffprobe_probe_tile_validate "$media"; then
+    res=ok
+    filter_tile_validate_write_cache "$cfile" "ok"
+  else
+    res=fail
+    filter_tile_validate_write_cache "$cfile" "fail"
+  fi
+  printf '%s\n' "$res" >"${workdir}/${idx}.result"
+}
+
+filter_tile_validate_write_cache() {
+  local cfile="$1"
+  local payload="$2"
+  local tmpf
+  if [ -z "$cfile" ]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$cfile")"
+  tmpf="${cfile}.tmp.$$.${RANDOM}"
+  if printf '%s' "$payload" >"$tmpf" 2>/dev/null && mv -f "$tmpf" "$cfile" 2>/dev/null; then
+    :
+  else
+    rm -f "$tmpf"
+  fi
+}
+
 # Parse command line arguments
 shift  # Remove effect from arguments
 while [[ $# -gt 0 ]]; do
@@ -1118,6 +1219,12 @@ filter_tile_readable_inputs() {
   local skipped=0
   local filtered_list
   local total_lines
+  local -a MEDIA_PATHS=()
+  local idx
+  local media
+  local CACHE_ROOT
+  local WORK_DIR
+  local -a ACTIVE_PIDS=()
 
   if ! command -v ffprobe >/dev/null 2>&1; then
     say_phase "phase=validate-media msg=ffprobe_missing skipping_probe=true"
@@ -1125,26 +1232,65 @@ filter_tile_readable_inputs() {
     return 0
   fi
 
-  total_lines=$(wc -l < "$input_list" | tr -d ' ')
-  say_phase "phase=validate-media msg=ffprobe_scan total_candidates=${total_lines}"
+  while IFS= read -r media; do
+    [ -n "$media" ] || continue
+    MEDIA_PATHS+=("$media")
+  done <"$input_list"
+
+  total_lines=${#MEDIA_PATHS[@]}
+  if [ "$total_lines" -eq 0 ]; then
+    say_phase "phase=validate-media msg=complete kept=0 skipped=0 checked=0"
+    echo "No readable media remained for tile effect."
+    return 1
+  fi
+
+  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v1"
+  mkdir -p "$CACHE_ROOT"
+  WORK_DIR="$(mktemp -d)"
+
+  resolve_parallel_job_count_for_tile
+  say_phase "phase=validate-media msg=ffprobe_scan total_candidates=${total_lines} parallel_jobs=${PARALLEL_JOBS} cache_dir=${CACHE_ROOT}"
+
+  for ((idx = 0; idx < total_lines; idx++)); do
+    if [ "$PARALLEL_JOBS" -gt 1 ]; then
+      filter_tile_validate_one "$idx" "${MEDIA_PATHS[$idx]}" "$WORK_DIR" "$CACHE_ROOT" &
+      ACTIVE_PIDS+=("$!")
+      while [ "${#ACTIVE_PIDS[@]}" -ge "$PARALLEL_JOBS" ]; do
+        wait "${ACTIVE_PIDS[0]}"
+        ACTIVE_PIDS=("${ACTIVE_PIDS[@]:1}")
+      done
+    else
+      filter_tile_validate_one "$idx" "${MEDIA_PATHS[$idx]}" "$WORK_DIR" "$CACHE_ROOT"
+    fi
+  done
+
+  for pid in "${ACTIVE_PIDS[@]}"; do
+    wait "$pid"
+  done
 
   filtered_list="$(mktemp)"
   TILE_SKIP_LOG="$(mktemp)"
 
-  while IFS= read -r media; do
-    [ -n "$media" ] || continue
+  for ((idx = 0; idx < total_lines; idx++)); do
     checked=$((checked + 1))
     if [ $((checked % 25)) -eq 0 ] || [ "$checked" -eq 1 ]; then
       say_phase "phase=validate-media progress=${checked}/${total_lines}"
     fi
-    if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$media" >/dev/null 2>&1; then
-      echo "$media" >> "$filtered_list"
-      kept=$((kept + 1))
-    else
-      echo "$media" >> "$TILE_SKIP_LOG"
-      skipped=$((skipped + 1))
-    fi
-  done < "$input_list"
+    media="${MEDIA_PATHS[$idx]}"
+    case $(tr -d '\n' <"${WORK_DIR}/${idx}.result") in
+      ok)
+        printf '%s\n' "$media" >>"$filtered_list"
+        kept=$((kept + 1))
+        ;;
+      *)
+        printf '%s\n' "$media" >>"$TILE_SKIP_LOG"
+        skipped=$((skipped + 1))
+        ;;
+    esac
+  done
+
+  rm -rf "$WORK_DIR"
+  WORK_DIR=""
 
   mv "$filtered_list" "$input_list"
 
@@ -1308,38 +1454,7 @@ tile_effect_fixed() {
     ACTIVE_PIDS=()
     render_failures=0
 
-    CPU_COUNT=1
-    if command -v sysctl >/dev/null 2>&1; then
-      CPU_COUNT=$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
-    elif command -v nproc >/dev/null 2>&1; then
-      CPU_COUNT=$(nproc 2>/dev/null || echo 1)
-    fi
-    if [ -z "$CPU_COUNT" ] || [ "$CPU_COUNT" -lt 1 ]; then
-      CPU_COUNT=1
-    fi
-
-    if [ "$JOBS" = "auto" ]; then
-      PARALLEL_JOBS=$((CPU_COUNT / 2))
-      if [ "$PARALLEL_JOBS" -lt 1 ]; then
-        PARALLEL_JOBS=1
-      fi
-    elif [[ "$JOBS" =~ ^[0-9]+$ ]] && [ "$JOBS" -ge 1 ]; then
-      PARALLEL_JOBS="$JOBS"
-    else
-      echo "Invalid --jobs value '$JOBS'; using auto."
-      PARALLEL_JOBS=$((CPU_COUNT / 2))
-      if [ "$PARALLEL_JOBS" -lt 1 ]; then
-        PARALLEL_JOBS=1
-      fi
-    fi
-
-    MAX_PARALLEL_JOBS=$((CPU_COUNT / 2))
-    if [ "$MAX_PARALLEL_JOBS" -lt 1 ]; then
-      MAX_PARALLEL_JOBS=1
-    fi
-    if [ "$PARALLEL_JOBS" -gt "$MAX_PARALLEL_JOBS" ]; then
-      PARALLEL_JOBS="$MAX_PARALLEL_JOBS"
-    fi
+    resolve_parallel_job_count_for_tile
 
     render_fixed_slide() {
       local out_file="$1"
@@ -1726,39 +1841,7 @@ tile_effect_randomized() {
   min_possible_slides=$(((total_images + GROUP_SIZE - 1) / GROUP_SIZE))
   max_possible_slides=$total_images
 
-  CPU_COUNT=1
-  if command -v sysctl >/dev/null 2>&1; then
-    CPU_COUNT=$(sysctl -n hw.logicalcpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
-  elif command -v nproc >/dev/null 2>&1; then
-    CPU_COUNT=$(nproc 2>/dev/null || echo 1)
-  fi
-  if [ -z "$CPU_COUNT" ] || [ "$CPU_COUNT" -lt 1 ]; then
-    CPU_COUNT=1
-  fi
-
-  if [ "$JOBS" = "auto" ]; then
-    # Use half of available CPU cores by default to reduce RAM pressure.
-    PARALLEL_JOBS=$((CPU_COUNT / 2))
-    if [ "$PARALLEL_JOBS" -lt 1 ]; then
-      PARALLEL_JOBS=1
-    fi
-  elif [[ "$JOBS" =~ ^[0-9]+$ ]] && [ "$JOBS" -ge 1 ]; then
-    PARALLEL_JOBS="$JOBS"
-  else
-    echo "Invalid --jobs value '$JOBS'; using auto."
-    PARALLEL_JOBS=$((CPU_COUNT / 2))
-    if [ "$PARALLEL_JOBS" -lt 1 ]; then
-      PARALLEL_JOBS=1
-    fi
-  fi
-
-  MAX_PARALLEL_JOBS=$((CPU_COUNT / 2))
-  if [ "$MAX_PARALLEL_JOBS" -lt 1 ]; then
-    MAX_PARALLEL_JOBS=1
-  fi
-  if [ "$PARALLEL_JOBS" -gt "$MAX_PARALLEL_JOBS" ]; then
-    PARALLEL_JOBS="$MAX_PARALLEL_JOBS"
-  fi
+  resolve_parallel_job_count_for_tile
 
   render_randomized_slide() {
     local out_file="$1"

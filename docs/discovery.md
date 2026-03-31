@@ -258,11 +258,11 @@ After the dispatcher, if **`OUTPUT`** is set and the effect is not basic/chaos, 
 Approximate **line region ~822** onward:
 
 1. **`configure_tile_video_encoder`** when **`--animate-videos`**: probes `ffmpeg -encoders` for VideoToolbox / libx265 / libx264 and fills **`TILE_VIDEO_CODEC_ARGS`**.
-2. **Sound**
-   - If **`SOUND_FILE`**: **`start_background_audio_loop`** (separate `mpv --no-video --loop-file=inf`), and the main tile player uses **`AUDIO_ARGS=(--no-audio)`** so video sync stays simple.
+2. **`filter_tile_readable_inputs`** (**validate-media**): optional **`ffprobe`** on each playlist entry; uses **`run_under_nice`** and **`-threads 1`** like composite **`ffmpeg`**. Results are cached under **`~/.cache/mpv-img-tricks/ffprobe-tile-v1/`** keyed by a fast identity (**`stat`**: device, inode, size, mtime) plus a probe version string; parallelism uses the same **`JOBS`** / **`resolve_parallel_job_count_for_tile`** rule as compositing (**half CPU cores** by default, capped).
+3. **Sound**
+   - If **`SOUND_FILE`**: background loop **`mpv`** starts on the first **`run_mpv`** (not during compositing prep); the main tile player uses **`AUDIO_ARGS=(--no-audio)`** so video sync stays simple.
    - Else: **`build_audio_args`** for inline mpv audio when supported.
-3. **`detect_screen_resolution`**: macOS **`system_profiler SPDisplaysDataType`**, Linux **`xrandr`**, else falls back to **`RESOLUTION`**.
-4. **`filter_tile_readable_inputs`**: optional **`ffprobe`** pass; without ffprobe, validation is skipped.
+4. **`detect_screen_resolution`**: macOS **`system_profiler SPDisplaysDataType`**, Linux **`xrandr`**, else falls back to **`RESOLUTION`**.
 5. Branch: **`RANDOMIZE`** → **`tile_effect_randomized`**, else **`tile_effect_fixed`**.
 
 ### 12.7 Fixed grid: lavfi fast path vs ffmpeg composites
