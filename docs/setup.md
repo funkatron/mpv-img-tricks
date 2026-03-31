@@ -122,6 +122,7 @@ From the repository root (after `uv sync`):
 | `make test` | Same as above. |
 | `make shellcheck` | Same **scoped** ShellCheck as CI (**shellcheck** on `PATH` required). |
 | `make ci` | **`make test`** then **`make shellcheck`** — use this before a push to match CI. |
+| `make manual-smoke` | **Not in CI.** Real **ffmpeg** encodes using `fixtures/images/`. See [tests/manual/README.md](../tests/manual/README.md). |
 
 ## CI and restricted environments
 

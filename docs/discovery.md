@@ -90,6 +90,7 @@ Python **only** parses arguments and runs backends with `subprocess`. Backends o
 ```bash
 ./tests/run-unit.sh
 # or: make test   (same); make ci   (unit tests + scoped shellcheck, matches CI locally)
+# Real ffmpeg: tests/manual/README.md, make manual-smoke
 ```
 
 Requires **`uv`** on `PATH`. The harness runs `uv sync` (or `--frozen` when lockfile allows).
@@ -103,6 +104,8 @@ All tests are **Bash** under `tests/unit/*.sh`. Assertions use **`rg` (ripgrep)*
 | `python-cli-spike.sh` | Stub backends via `MPV_IMG_TRICKS_SCRIPTS_DIR`; correct argv for live / chaos / tile / plain render / effect render; invalid combo errors |
 | `slideshow-scale-modes.sh` | Fake `mpv` on `PATH`; `mpv-pipeline.sh` scale flags; `slideshow.sh` default duration 2.0 and option/dir order |
 | `img-effects-tile-animation.sh` | Stub ffmpeg/mpv/ffprobe; tile **animated** vs **still** branches; encoder override (`libx264` vs `hevc_videotoolbox`) |
+| `img-effects-tile-fixed-grid.sh` | Fixed **2×1** grid, **lavfi-complex** / **xstack** path (no `--randomize`) |
+| `img-effects-ken-burns.sh` | Stub ffmpeg; **zoompan** graph, **concat**, integer **d=** frame count |
 
 ### 6.3 Coverage gaps (honest)
 

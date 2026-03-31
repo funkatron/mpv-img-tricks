@@ -1,5 +1,5 @@
 # Local checks — mirrors .github/workflows/ci.yml jobs (unit + scoped shellcheck).
-.PHONY: test shellcheck ci
+.PHONY: test shellcheck ci manual-smoke
 
 test:
 	./tests/run-unit.sh
@@ -12,3 +12,7 @@ shellcheck:
 	shellcheck scripts/images-to-video.sh
 
 ci: test shellcheck
+
+# Real ffmpeg encodes (macOS-friendly); not run in CI.
+manual-smoke:
+	bash tests/manual/smoke-renders.sh

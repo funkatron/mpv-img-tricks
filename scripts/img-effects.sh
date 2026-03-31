@@ -653,6 +653,14 @@ ken_burns_effect() {
   WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
   HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
 
+  # zoompan `d` is a frame count; must be a positive integer (not "0.05*30").
+  local zoompan_d
+  zoompan_d=$(awk -v d="$DURATION" -v fps="$FPS" 'BEGIN {
+    n = d * fps
+    if (n < 1) n = 1
+    printf "%d", int(n + 0.5)
+  }')
+
   FILTER=""
   local -a ff_in=()
   i=0
@@ -660,7 +668,7 @@ ken_burns_effect() {
   while IFS= read -r img; do
     PAN_X=$((RANDOM % 200 - 100))
     PAN_Y=$((RANDOM % 200 - 100))
-    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},zoompan=z='min(zoom+0.0015,1.3)':d=${DURATION}*${FPS}:x='iw/2-(iw/zoom/2)+${PAN_X}':y='ih/2-(ih/zoom/2)+${PAN_Y}':s=${WIDTH}x${HEIGHT}[v${i}];"
+    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},zoompan=z='min(zoom+0.0015,1.3)':d=${zoompan_d}:x='iw/2-(iw/zoom/2)+${PAN_X}':y='ih/2-(ih/zoom/2)+${PAN_Y}':s=${WIDTH}x${HEIGHT}[v${i}];"
     ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
@@ -759,10 +767,10 @@ reality_effect() {
   while IFS= read -r img; do
     EFFECT=$((RANDOM % 4))
     case $EFFECT in
-      0) FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[r1][r2];[r1]vflip[r1];[r2]hflip[r2];[r1][r2]blend=all_mode=difference[v${i}];" ;;
-      1) FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[r1][r2][r3];[r1]hue=h=0[r1];[r2]hue=h=120[r2];[r3]hue=h=240[r3];[r1][r2]blend=all_mode=screen[r12];[r12][r3]blend=all_mode=multiply[v${i}];" ;;
-      2) FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[r1][r2][r3][r4];[r1]hue=h=0[r1];[r2]hue=h=90[r2];[r3]hue=h=180[r3];[r4]hue=h=270[r4];[r1][r2]blend=all_mode=addition[r12];[r3][r4]blend=all_mode=addition[r34];[r12][r34]blend=all_mode=difference[v${i}];" ;;
-      3) FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[r1][r2];[r1]hue=h=0:s=2[r1];[r2]hue=h=180:s=2[r2];[r1][r2]blend=all_mode=difference[v${i}];" ;;
+      0) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2];[r1]vflip[r1];[r2]hflip[r2];[r1][r2]blend=all_mode=difference[v${i}];" ;;
+      1) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2][r3];[r1]hue=h=0[r1];[r2]hue=h=120[r2];[r3]hue=h=240[r3];[r1][r2]blend=all_mode=screen[r12];[r12][r3]blend=all_mode=multiply[v${i}];" ;;
+      2) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2][r3][r4];[r1]hue=h=0[r1];[r2]hue=h=90[r2];[r3]hue=h=180[r3];[r4]hue=h=270[r4];[r1][r2]blend=all_mode=addition[r12];[r3][r4]blend=all_mode=addition[r34];[r12][r34]blend=all_mode=difference[v${i}];" ;;
+      3) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2];[r1]hue=h=0:s=2[r1];[r2]hue=h=180:s=2[r2];[r1][r2]blend=all_mode=difference[v${i}];" ;;
     esac
     ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
@@ -851,7 +859,7 @@ liquid_effect() {
   i=0
 
   while IFS= read -r img; do
-    FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION},split[l1][l2][l3];[l1]hue=h=45:s=1.5[l1];[l2]hue=h=135:s=1.5[l2];[l3]hue=h=225:s=1.5[l3];[l1][l2]blend=all_mode=addition[l12];[l12][l3]blend=all_mode=addition[v${i}];"
+    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[l1][l2][l3];[l1]hue=h=45:s=1.5[l1];[l2]hue=h=135:s=1.5[l2];[l3]hue=h=225:s=1.5[l3];[l1][l2]blend=all_mode=addition[l12];[l12][l3]blend=all_mode=addition[v${i}];"
     ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"
@@ -1942,7 +1950,7 @@ crossfade_effect() {
   i=0
 
   while IFS= read -r img; do
-    FILTER="${FILTER}[${i}:v]scale=${RESOLUTION}:force_original_aspect_ratio=increase,crop=${RESOLUTION}[v${i}];"
+    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT}[v${i}];"
     ff_in+=(-loop 1 -t "$DURATION" -i "$img")
     i=$((i+1))
   done < "$input_list"

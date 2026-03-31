@@ -24,6 +24,8 @@ make ci
 
 That runs **`./tests/run-unit.sh`** (needs **`uv`** and **`rg`**) plus **shellcheck** on the scoped Bash scripts. Use **`make test`** for unit tests only. Details: [.github/workflows/ci.yml](.github/workflows/ci.yml), [docs/setup.md](docs/setup.md#routine-checks).
 
+**Real ffmpeg checks** (optional, after changing tile/ken-burns or effects): [tests/manual/README.md](tests/manual/README.md) — run **`./tests/manual/generate-fixtures.sh`** once, then **`make manual-smoke`** (needs **ffmpeg** / **ffprobe** on `PATH`; writes under **`tmp/effect-smoke/`**).
+
 ## Requirements (summary)
 
 - **[uv](https://docs.astral.sh/uv/)** on your `PATH` for `./slideshow` and for `./tests/run-unit.sh`.
@@ -320,14 +322,6 @@ Scale mode semantics for the slideshow CLI:
 - `fit` = contain/letterbox (AR preserved)
 - `fill` = cover/crop (AR preserved)
 - `stretch` = fill window without preserving AR
-
-## Development Testing
-
-Unit tests require **`uv`** on your `PATH`. `./tests/run-unit.sh` runs `uv sync` first (uses `uv sync --frozen` when the lockfile allows).
-
-```bash
-./tests/run-unit.sh
-```
 
 ## Future Plans
 
