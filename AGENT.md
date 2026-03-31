@@ -49,7 +49,7 @@ Harness: `tests/run-unit.sh` (needs **`uv`**, **`rg`**). Assertions: **`tests/un
 - Prefer small, behavior-focused diffs; avoid drive-by refactors unrelated to the task.
 - After shell changes in CI scope, run **`make ci`** before commit when practical.
 - Breaking CLI/env changes are acceptable for this project; update [docs/setup.md](docs/setup.md) and any tests that assert argv strings.
-- **`--clear-cache`** (live): clears **`ffprobe-tile-v1`**, **`ffprobe-tile-v2`**, and **`tile-randomized`** under **`~/.cache/mpv-img-tricks/`** — from Python for basic live and plain **`--render`**, forwarded as **`--clear-cache`** to **`img-effects.sh`** for tile, chaos, and render-with-effect.
+- **`--clear-cache`** (live): clears **`ffprobe-tile-v1`**, **`ffprobe-tile-v2`**, **`ffprobe-tile-v3`**, and **`tile-randomized`** under **`~/.cache/mpv-img-tricks/`** — from Python for basic live and plain **`--render`**, forwarded as **`--clear-cache`** to **`img-effects.sh`** for tile, chaos, and render-with-effect.
 
 ## Docs you might edit
 
