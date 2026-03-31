@@ -3,6 +3,7 @@ name = "mpv-img-tricks"
 version = "0.1.0"
 description = "Live slideshows and ffmpeg effects over image folders (Python CLI over Bash backends)."
 readme = "README.md"
+license = "BSD-3-Clause"
 requires-python = ">=3.11"
 dependencies = []
 

@@ -26,7 +26,7 @@ Treat the **CI workflow** as a draft: the **shellcheck** job may need `ignore_pa
 
 | R-xx | Deliverable |
 |------|-------------|
-| **R-23** | Commit `LICENSE` (MIT or team choice). |
+| **R-23** | Commit `LICENSE` (**BSD-3-Clause**). |
 | **R-09** | Commit `.github/workflows/ci.yml`: `uv sync --frozen` + `./tests/run-unit.sh`; install **ripgrep**. |
 | **R-14** | Keep shellcheck job; tune (`continue-on-error`, paths, or fix findings) so **main stays green** or policy is explicit. |
 | **R-28** | `.gitignore`: ensure `fixtures/` stay trackable; document if negation rules change. |
