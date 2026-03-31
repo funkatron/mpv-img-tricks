@@ -17,6 +17,7 @@ This is a personal utility project. Breaking CLI changes are acceptable when the
 ## Requirements (summary)
 
 - **[uv](https://docs.astral.sh/uv/)** on your `PATH` for `./slideshow` and for `./tests/run-unit.sh`.
+- **[ripgrep](https://github.com/BurntSushi/ripgrep)** (`rg`) for `./tests/run-unit.sh` (assertions in `tests/unit/*.sh`).
 - **Python 3.11+**, **Bash**, **mpv**, and **ffmpeg** for real runs (versions are up to you; the CLI shells out to the Bash backends).
 - **fswatch** only if you use `--watch` (see [docs/setup.md](docs/setup.md)).
 

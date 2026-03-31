@@ -7,6 +7,7 @@ This page expands on [the main README](../README.md): prerequisites, how the CLI
 | Need | Why |
 |------|-----|
 | **[uv](https://docs.astral.sh/uv/)** on your `PATH` | Required for `./slideshow` (it runs `uv run slideshow`) and for `./tests/run-unit.sh`. |
+| **[ripgrep](https://github.com/BurntSushi/ripgrep)** (`rg`) | Unit tests under `tests/unit/*.sh` use `rg` for assertions. Install via your package manager (e.g. `brew install ripgrep`, `apt install ripgrep`). |
 | **Python 3.11+** | Declared in `pyproject.toml`; uv installs/selects a compatible interpreter. |
 | **Bash** | Backend scripts under `scripts/` are Bash. |
 | **mpv** | Live slideshow playback. |
@@ -77,6 +78,45 @@ A published wheel contains only the Python package. **Running the full tool stil
 |----------|---------|
 | `MPV_IMG_TRICKS_ROOT` | Absolute path to the **repository root** (directory that contains `scripts/slideshow.sh`). Use if auto-discovery fails (unusual cwd, tooling that changes the working directory). |
 | `MPV_IMG_TRICKS_SCRIPTS_DIR` | Absolute path to the directory that contains `slideshow.sh`, `img-effects.sh`, and `images-to-video.sh`. Overrides normal `scripts/` resolution (used by unit tests with mock backends). |
+| `MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR` | When set, `scripts/slideshow.sh` uses this directory if no image path is passed on the command line (personal automation only). |
+| `MPV_IMG_TRICKS_CONFIG` | Optional path to a **JSON** file with default CLI values (see below). If unset and `~/.config/mpv-img-tricks/config.json` exists, that file is loaded. |
+
+## Optional JSON defaults
+
+Merge order: built-in argparse defaults, then keys from the config file, then explicit CLI flags (CLI always wins). Supported keys (omit any you do not need):
+
+- `duration`, `scale_mode`, `resolution`, `fps`, `img_per_sec`, `limit` (strings or numbers coerced as for CLI)
+- `quiet`, `debug`, `verbose_ffmpeg` (booleans)
+
+Example `~/.config/mpv-img-tricks/config.json`:
+
+```json
+{
+  "duration": "3.0",
+  "scale_mode": "fit",
+  "quiet": false,
+  "debug": false
+}
+```
+
+## Tiled slideshow: what runs before playback
+
+For `--effect tile` (and similar compositing paths), work is not silent: phases are printed on stderr with the prefix `mpv-img-tricks:` when `--quiet` is not set. Rough order:
+
+1. **validate-media** — Optional `ffprobe` pass over the playlist (progress lines every 25 files for large sets).
+2. **probe-encoders** — With `--animate-videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
+3. **prepare-audio** — Optional silence trim via ffmpeg when `--sound` is set.
+4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted every few slides.
+
+If screen size detection fails (no usable `system_profiler` / `xrandr`), tile layout falls back to `--resolution`.
+
+## CI and restricted environments
+
+GitHub Actions and normal Linux/macOS runners are fine for `./tests/run-unit.sh`. Some **sandboxed** or highly locked-down environments block `nice(2)` or bash process substitution used inside `img-effects.sh`; if compositing tests fail with “Operation not permitted”, run the same command on a full VM or your laptop shell.
+
+## Versioning
+
+This project is **pre-alpha**. Breaking CLI or default-behavior changes are acceptable when they simplify the workflow; rely on git history and tags for snapshots if you need reproducibility.
 
 ## Troubleshooting
 

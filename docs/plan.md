@@ -10,13 +10,9 @@ This document turns **[recommendations.md](recommendations.md)** into an impleme
 
 ## Current repo status (implementation snapshot)
 
-Work **started** from this plan but **not fully landed** in git. Before the next coding pass, confirm:
+**Landed in tree:** Phase-style `mpv-img-tricks:` stderr lines (**R-01** / **R-21**), newline-friendly progress (**R-02**), `--quiet` / `--verbose-ffmpeg` plumbed (**R-03** / **R-04**), tiled phases documented (**R-05**), slideshow default dir + recursion flags (**R-07** / **R-08**), GHA unit job + scoped shellcheck + `rg` (**R-09** / **R-14**), `.gitignore` for `tmp/` and trackable `fixtures/` (**R-28** / **R-29**), test/docs notes on CI vs sandbox (**R-10** / **R-11**), contract tests including phase prefix and ffmpeg argv logging (**R-12** / **R-13**), argv-style ffmpeg in `img-effects.sh` (**R-15**), `nice` guard (**R-19**), `--dry-run` + JSON config defaults (**R-22** / **R-30**), screen/resolution and versioning notes (**R-18** / **R-26** / **R-27**), optional `dev` extra in `pyproject.toml` (**R-25**).
 
-- **Uncommitted / unmerged (verify with `git status`):** `LICENSE`, `.github/workflows/ci.yml`, `.gitignore` tweaks (fixtures negation, `tmp/`), and any local edits to `recommendations.md`.
-
-- **Not yet implemented in code:** most **R-01–R-22** behavior in `scripts/img-effects.sh` / `mpv_img_tricks/cli.py`, **R-07** / **R-08** in `slideshow.sh` / img-effects defaults, **R-15** / **R-16** refactors, **R-30** JSON loader, and doc updates for **R-05**, **R-10**, **R-11**, **R-18**, **R-26**, **R-27**.
-
-Treat the **CI workflow** as a draft: the **shellcheck** job may need `ignore_paths`, severity, or follow-up fixes once run on GitHub; **unit** job requires **Ubuntu + `rg` + `uv`** (already reflected in the workflow sketch).
+**Still explicit non-goals / follow-ups:** **R-06** (dual basic paths), **R-17** (encoder fallbacks off macOS), **R-24**, **R-31** per [recommendations.md](recommendations.md). **R-20** (forward `--debug` everywhere): confirm parity across `images-to-video.sh` if gaps appear.
 
 ---
 
