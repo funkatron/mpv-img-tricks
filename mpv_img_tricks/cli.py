@@ -40,11 +40,25 @@ def run_command(cmd: list[str]) -> int:
 
 def add_display_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--duration", "-d", default="2.0", help="Duration per image")
-    parser.add_argument(
+    scale = parser.add_mutually_exclusive_group()
+    scale.add_argument(
         "--scale-mode",
-        default="fit",
         choices=["fit", "fill", "stretch"],
-        help="Image scaling mode",
+        help="Image scaling mode (default: fit, or from config)",
+    )
+    scale.add_argument(
+        "--fit",
+        dest="scale_mode",
+        action="store_const",
+        const="fit",
+        help="Shorthand for --scale-mode fit",
+    )
+    scale.add_argument(
+        "--fill",
+        dest="scale_mode",
+        action="store_const",
+        const="fill",
+        help="Shorthand for --scale-mode fill",
     )
     parser.add_argument("--instances", "-n", default="1", help="Number of mpv instances")
     parser.add_argument("--display", help="Display index for the single instance or master")
@@ -336,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  slideshow ~/pics",
             "  slideshow live ~/pics",
             "  slideshow ~/pics --effect chaos --duration 0.02",
+            "  slideshow ~/pics --fill",
             "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
             "  slideshow ~/pics --render --output out.mp4",
             "  slideshow ~/pics --render --effect glitch --output glitch.mp4",

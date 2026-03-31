@@ -75,6 +75,19 @@ slideshow "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
 assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
 
 : > "$LOG_FILE"
+slideshow live "$MEDIA_DIR" --duration 0.01 --fill >/dev/null
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
+
+: > "$LOG_FILE"
+slideshow live "$MEDIA_DIR" --duration 0.01 --fit >/dev/null
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
+
+if slideshow live "$MEDIA_DIR" --fit --fill >/dev/null 2>"${WORK_DIR}/mx.err"; then
+  fail "expected --fit and --fill together to fail"
+fi
+rg -q "mutually exclusive|not allowed" "${WORK_DIR}/mx.err" || rg -q "argument" "${WORK_DIR}/mx.err" || fail "expected argparse error for --fit --fill"
+
+: > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --effect chaos --duration 0.01 >/dev/null
 assert_contains "$LOG_FILE" "img-effects.sh chaos ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
 

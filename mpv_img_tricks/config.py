@@ -45,4 +45,5 @@ def live_subparser_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
         out["debug"] = bool(cfg["debug"])
     if "verbose_ffmpeg" in cfg:
         out["verbose_ffmpeg"] = bool(cfg["verbose_ffmpeg"])
+    out.setdefault("scale_mode", "fit")
     return out
