@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import argparse
 import shlex
+import shutil
 import subprocess
 import sys
 from argparse import Namespace
+from pathlib import Path
 
 from mpv_img_tricks.config import live_subparser_defaults, load_config
 from mpv_img_tricks.paths import get_scripts_dir
@@ -203,18 +205,35 @@ def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None
     if args.recursive and getattr(args, "effect_no_recursive", False):
         parser.error("choose either --recursive or --no-subdirs for effect discovery, not both")
 
-    if getattr(args, "clear_cache", False):
-        effect = args.effect or "basic"
-        if args.render and not args.effect:
-            parser.error(
-                "--clear-cache only clears img-effects caches (ffprobe validate, tile composites); "
-                "omit it for plain --render or use with --effect …"
-            )
-        if not args.render and effect == "basic":
-            parser.error(
-                "--clear-cache applies to --effect tile, --effect chaos, or --render with --effect … "
-                "(not basic live-only)"
-            )
+
+_TOOL_CACHE_SUBDIRS = ("ffprobe-tile-v1", "ffprobe-tile-v2", "tile-randomized")
+
+
+def clear_mpv_img_tricks_tool_caches(*, quiet: bool) -> None:
+    """Remove img-effects cache dirs under ~/.cache/mpv-img-tricks (same set as img-effects.sh)."""
+    base = Path.home() / ".cache" / "mpv-img-tricks"
+    removed = False
+    for name in _TOOL_CACHE_SUBDIRS:
+        path = base / name
+        if path.exists():
+            shutil.rmtree(path)
+            removed = True
+    if quiet:
+        return
+    if removed:
+        print(
+            "mpv-img-tricks: phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 tile-randomized",
+            file=sys.stderr,
+        )
+    else:
+        print(f"mpv-img-tricks: phase=cache msg=cleared noop dir={base}", file=sys.stderr)
+
+
+def _clear_cache_handled_by_img_effects(args: Namespace) -> bool:
+    effect = args.effect or "basic"
+    if args.render:
+        return bool(args.effect)
+    return effect in ("tile", "chaos")
 
 
 def build_live_backend_command(args: Namespace) -> list[str]:
@@ -310,6 +329,10 @@ def build_effect_render_command(args: Namespace) -> list[str]:
 
 def handle_live(args: Namespace, parser: argparse.ArgumentParser) -> int:
     validate_live_args(args, parser)
+
+    if getattr(args, "clear_cache", False) and not args.dry_run:
+        if not _clear_cache_handled_by_img_effects(args):
+            clear_mpv_img_tricks_tool_caches(quiet=args.quiet)
 
     if args.dry_run:
         if args.render:

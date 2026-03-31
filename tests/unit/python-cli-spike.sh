@@ -100,13 +100,18 @@ slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --clear-cache --dry
 assert_contains "${WORK_DIR}/dry-clear.txt" "--clear-cache"
 assert_contains "${WORK_DIR}/dry-clear.txt" "img-effects.sh tile"
 
-if slideshow live "$MEDIA_DIR" --clear-cache >/dev/null 2>"${WORK_DIR}/clear-basic.err"; then
-  fail "expected --clear-cache with basic live to fail"
+: > "$LOG_FILE"
+if ! slideshow live "$MEDIA_DIR" --clear-cache --duration 0.01 >/dev/null 2>"${WORK_DIR}/clear-basic.err"; then
+  fail "expected --clear-cache with basic live to succeed"
 fi
-assert_contains "${WORK_DIR}/clear-basic.err" "clear-cache"
+assert_contains "${WORK_DIR}/clear-basic.err" "phase=cache"
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
 
 : > "$LOG_FILE"
-slideshow live "$MEDIA_DIR" --render --output out.mp4 >/dev/null
+if ! slideshow live "$MEDIA_DIR" --render --output out.mp4 --clear-cache >/dev/null 2>"${WORK_DIR}/clear-render.err"; then
+  fail "expected --clear-cache with plain --render to succeed"
+fi
+assert_contains "${WORK_DIR}/clear-render.err" "phase=cache"
 assert_contains "$LOG_FILE" "images-to-video.sh ${MEDIA_DIR} 60 1920x1080 out.mp4"
 
 : > "$LOG_FILE"
