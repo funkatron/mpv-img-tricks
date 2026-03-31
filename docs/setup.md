@@ -84,6 +84,7 @@ A published wheel contains only the Python package. **Running the full tool stil
 | `MPV_IMG_TRICKS_CONFIG` | Optional path to a **JSON** file with default CLI values (see below). If unset and `~/.config/mpv-img-tricks/config.json` exists, that file is loaded. |
 | `MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS` | If non-empty, **all** slideshow mpv launches skip auto-loading **`mpv-scripts/slideshow-bindings.lua`** (overrides `--use-slideshow-bindings yes` on **`mpv-pipeline.sh`**). |
 | `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE` | If non-empty, **`--effect tile`** validate-media does **not** read or write **`~/.cache/mpv-img-tricks/ffprobe-tile-v5`** (forces live **`ffprobe`** every run; use while debugging “everything skipped”). |
+| `MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG` | If non-empty, **`--effect tile`** prints extra **stderr** lines: **`ffprobe`** path/version and step-by-step probe errors for up to **five** skipped files. When **all** files are skipped, **three** samples run automatically (still **stderr**) so a broken install (e.g. invalid **`ffprobe`** flags) is obvious without setting this first. |
 
 ## Optional JSON defaults
 

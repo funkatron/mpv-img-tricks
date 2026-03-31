@@ -220,19 +220,26 @@ def clear_mpv_img_tricks_tool_caches(*, quiet: bool) -> None:
     """Remove img-effects cache dirs under ~/.cache/mpv-img-tricks (same set as img-effects.sh)."""
     base = Path.home() / ".cache" / "mpv-img-tricks"
     removed = False
+    failures: list[tuple[Path, OSError]] = []
     for name in _TOOL_CACHE_SUBDIRS:
         path = base / name
-        if path.exists():
+        if not path.exists():
+            continue
+        try:
             shutil.rmtree(path)
             removed = True
+        except OSError as exc:
+            failures.append((path, exc))
     if quiet:
         return
+    for path, exc in failures:
+        print(f"mpv-img-tricks: phase=cache msg=warn could_not_remove path={path} err={exc}", file=sys.stderr)
     if removed:
         print(
             "mpv-img-tricks: phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 ffprobe-tile-v5 tile-randomized",
             file=sys.stderr,
         )
-    else:
+    elif not failures:
         print(f"mpv-img-tricks: phase=cache msg=cleared noop dir={base}", file=sys.stderr)
 
 

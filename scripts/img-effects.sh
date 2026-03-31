@@ -151,6 +151,38 @@ run_ffprobe_probe_tile_validate() {
   return 1
 }
 
+# stderr samples for validate-media failures (ignores QUIET). Uses MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG,
+# DEBUG=true, or auto (up to 3 samples) when kept=0.
+_mpv_img_tricks_validate_debug_print() {
+  printf '%s %s\n' "$PHASE_PREFIX" "$*" >&2
+}
+
+_mpv_img_tricks_ffprobe_diagnose_one_skip_path() {
+  local media="$1"
+  local vout verr ierr tail_
+  tail_="${media##*/}"
+  if [[ ! -e "$media" ]]; then
+    _mpv_img_tricks_validate_debug_print "phase=validate-media debug=missing path_chars_max200=${media:0:200}"
+    return 0
+  fi
+  vout=$(mktemp)
+  verr=$(mktemp)
+  ierr=$(mktemp)
+  run_under_nice ffprobe -v error -threads 1 -select_streams v -show_entries stream=codec_type -of csv=p=0 "$media" >"$vout" 2>"$verr" || true
+  if [[ -s "$vout" ]]; then
+    _mpv_img_tricks_validate_debug_print "phase=validate-media debug=sample_ok kind=select_streams_v path_tail=${tail_}"
+    rm -f "$vout" "$verr" "$ierr"
+    return 0
+  fi
+  _mpv_img_tricks_validate_debug_print "phase=validate-media debug=sample_step path_tail=${tail_} select_v_stderr=$(tr '\n' ' ' <"$verr" | head -c 280)"
+  if run_under_nice ffprobe -v error -threads 1 -i "$media" >/dev/null 2>"$ierr"; then
+    _mpv_img_tricks_validate_debug_print "phase=validate-media debug=sample_ok kind=demux path_tail=${tail_} (validator logic may need review)"
+  else
+    _mpv_img_tricks_validate_debug_print "phase=validate-media debug=sample_fail path_tail=${tail_} demux_stderr=$(tr '\n' ' ' <"$ierr" | head -c 420)"
+  fi
+  rm -f "$vout" "$verr" "$ierr"
+}
+
 probe_cache_sha256_hex() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | awk '{print $1}'
@@ -534,6 +566,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --no-recursive    Only scan the top-level directory for images"
       echo "  --no-cache       Rebuild randomized tile composites (default: cache enabled)"
       echo "  --clear-cache    Remove ~/.cache/mpv-img-tricks ffprobe-tile-* and tile-randomized, then continue"
+      echo "  Env MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG=1  Extra validate-media stderr (see docs/setup.md)"
       echo "  --animate-videos Render animated tile clips (mp4) instead of still composites"
       echo "  --encoder NAME   Animated tile encoder: auto|hevc_videotoolbox|libx265|libx264"
       echo "  --playlist, -p   Use playlist file for large image sets (ensures all images are loaded)"
@@ -1358,6 +1391,14 @@ filter_tile_readable_inputs() {
       say_phase "phase=validate-media progress=${checked}/${total_lines}"
     fi
     media="${MEDIA_PATHS[$idx]}"
+    if [ ! -f "${WORK_DIR}/${idx}.result" ]; then
+      if [[ -n "${MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG:-}" ]] || [[ "$DEBUG" == "true" ]]; then
+        _mpv_img_tricks_validate_debug_print "phase=validate-media debug=missing_worker_result idx=${idx} path_tail=${media##*/}"
+      fi
+      printf '%s\n' "$media" >>"$TILE_SKIP_LOG"
+      skipped=$((skipped + 1))
+      continue
+    fi
     case $(tr -d '\n' <"${WORK_DIR}/${idx}.result") in
       ok)
         printf '%s\n' "$media" >>"$filtered_list"
@@ -1377,8 +1418,25 @@ filter_tile_readable_inputs() {
 
   say_phase "phase=validate-media msg=complete kept=${kept} skipped=${skipped} checked=${checked}"
 
+  local diag_max=0
+  if [[ -n "${MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG:-}" ]] || [[ "$DEBUG" == "true" ]]; then
+    diag_max=5
+  elif [ "$kept" -eq 0 ] && [ "$skipped" -gt 0 ]; then
+    diag_max=3
+  fi
+  if [ "$diag_max" -gt 0 ] && [ -s "$TILE_SKIP_LOG" ]; then
+    _mpv_img_tricks_validate_debug_print "phase=validate-media debug=ffprobe $(command -v ffprobe 2>/dev/null || echo missing) version=$(ffprobe -version 2>/dev/null | head -n 1)"
+    local _dpath _dc=0
+    while IFS= read -r _dpath && [ "$_dc" -lt "$diag_max" ]; do
+      [ -n "$_dpath" ] || continue
+      _mpv_img_tricks_ffprobe_diagnose_one_skip_path "$_dpath"
+      _dc=$((_dc + 1))
+    done <"$TILE_SKIP_LOG"
+  fi
+
   if [ "$kept" -eq 0 ]; then
     echo "No readable media remained for tile effect."
+    _mpv_img_tricks_validate_debug_print "phase=validate-media hint=export MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG=1 for more samples or see skip log below"
     if [ "$skipped" -gt 0 ]; then
       echo "Skipped list saved to: $TILE_SKIP_LOG"
     fi
