@@ -110,10 +110,22 @@ run_composite_ffmpeg() {
 }
 
 # ffprobe for tile validate-media: same nice + single thread pattern as composite ffmpeg.
+# Prefer any video stream (not only v:0); still images: demux-only fallback when extension matches.
 run_ffprobe_probe_tile_validate() {
   local media="$1"
-  run_under_nice ffprobe -nostdin -v error -threads 1 \
-    -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$media" >/dev/null 2>&1
+  local vstreams
+  vstreams=$(run_under_nice ffprobe -nostdin -v error -threads 1 \
+    -select_streams v -show_entries stream=codec_type -of csv=p=0 "$media" 2>/dev/null) || true
+  if [[ -n "$vstreams" ]]; then
+    return 0
+  fi
+  if is_probably_image_file "$media" && run_under_nice ffprobe -nostdin -v error -threads 1 -i "$media" >/dev/null 2>&1; then
+    return 0
+  fi
+  if is_probably_video_file "$media" && run_under_nice ffprobe -nostdin -v error -threads 1 -i "$media" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 probe_cache_sha256_hex() {
@@ -121,6 +133,17 @@ probe_cache_sha256_hex() {
     sha256sum | awk '{print $1}'
   else
     shasum -a 256 2>/dev/null | awk '{print $1}'
+  fi
+}
+
+# Cache filenames: MD5 when available (fast); else SHA-256 via probe_cache_sha256_hex.
+probe_cache_md5_hex() {
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum | awk '{print $1}'
+  elif command -v md5 >/dev/null 2>&1; then
+    md5 -q
+  else
+    probe_cache_sha256_hex
   fi
 }
 
@@ -158,7 +181,7 @@ resolve_parallel_job_count_for_tile() {
   fi
 }
 
-# Writes ok or fail to workdir/${idx}.result; caches by stat identity under cache_root.
+# Writes ok or fail to workdir/${idx}.result; cache key = path + stat (exFAT often has inode 0).
 filter_tile_validate_one() {
   local idx="$1"
   local media="$2"
@@ -172,8 +195,8 @@ filter_tile_validate_one() {
     fi
   fi
 
-  if [ -n "$id" ] && [ -n "$cache_root" ]; then
-    h=$(printf '%s|%s' "ffprobe-tile-v1" "$id" | probe_cache_sha256_hex)
+  if [ -n "$cache_root" ]; then
+    h=$(printf '%s\0%s\0%s' "ffprobe-tile-v2" "$media" "${id:-_}" | probe_cache_md5_hex)
     cfile="${cache_root}/${h}"
     if [ -f "$cfile" ]; then
       res=$(tr -d '\n' <"$cfile")
@@ -1244,7 +1267,7 @@ filter_tile_readable_inputs() {
     return 1
   fi
 
-  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v1"
+  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v2"
   mkdir -p "$CACHE_ROOT"
   WORK_DIR="$(mktemp -d)"
 
