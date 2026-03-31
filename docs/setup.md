@@ -107,10 +107,7 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 
 ### Defaults
 
-| Entrypoint | Default |
-|------------|---------|
-| **`slideshow …`** (Python CLI) | **2.0** s (`scripts/lib/constants.sh`), unless JSON config or flags override |
-| **`img-effects.sh` invoked directly** | **0.05** s in-script default — use the **`slideshow`** CLI for the same defaults as the rest of the tool |
+**`DEFAULT_SLIDESHOW_DURATION_SECONDS`** in [`scripts/lib/constants.sh`](../scripts/lib/constants.sh) (currently **2.0** s) applies everywhere **`img-effects.sh`** or **`slideshow.sh`** runs, including if someone invokes the Bash backend directly (not supported as an end-user API). Override with **`--duration`** or JSON **`duration`** as usual.
 
 ### Live playback
 

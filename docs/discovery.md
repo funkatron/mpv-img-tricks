@@ -28,7 +28,7 @@ High-level patterns from recent commits (not an exhaustive changelog):
 
 - **Docs:** README refresh, `docs/setup.md`, PATH and symlink options for `slideshow`.
 - **Packaging:** `uv` project (`pyproject.toml`, `uv.lock`), `slideshow` console script, root `./slideshow` launcher.
-- **CLI:** Single **`live`** subcommand (default when omitted); default image duration **2.0 s** (see `scripts/lib/constants.sh`).
+- **CLI:** Single **`live`** subcommand (default when omitted); default image duration **2.0 s** from `scripts/lib/constants.sh` (also sourced by **`slideshow.sh`** and **`img-effects.sh`**).
 - **Semantics:** Scale modes (`fit` / `fill` / `stretch`) wired through `scripts/mpv-pipeline.sh`; argument order handling in `slideshow.sh`.
 - **Effects / playback:** Tile and chaos paths, optional sound with trim, ffmpeg effect presets, memory/thread guarding for ffmpeg, file ordering (`natural` vs `om`), randomized tile groups and caching.
 - **Cursor / process:** Three-lens–style guidance may live in **global** `~/.cursor/rules`; the repo may not ship `.cursor/rules` (check git history if you expect a local copy).
