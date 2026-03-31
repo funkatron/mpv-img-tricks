@@ -211,6 +211,7 @@ _TOOL_CACHE_SUBDIRS = (
     "ffprobe-tile-v2",
     "ffprobe-tile-v3",
     "ffprobe-tile-v4",
+    "ffprobe-tile-v5",
     "tile-randomized",
 )
 
@@ -228,7 +229,7 @@ def clear_mpv_img_tricks_tool_caches(*, quiet: bool) -> None:
         return
     if removed:
         print(
-            "mpv-img-tricks: phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 tile-randomized",
+            "mpv-img-tricks: phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 ffprobe-tile-v5 tile-randomized",
             file=sys.stderr,
         )
     else:

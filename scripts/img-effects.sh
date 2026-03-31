@@ -54,7 +54,7 @@ RECURSIVE="true"  # Whether to recurse into subdirectories (align with basic sli
 USE_PLAYLIST="false"  # Whether to use playlist file for large image sets
 RANDOM_SCALE="false"  # Whether to randomly alternate between fill and fit scaling
 CACHE_COMPOSITES="true"  # Cache randomized tile composites by default
-CACHE_VERSION="v5"  # Bump when randomized composite behavior changes
+CACHE_VERSION="v6"  # Bump when randomized composite behavior changes
 CLEAR_TOOL_CACHE="false"  # --clear-cache: rm ~/.cache/mpv-img-tricks/{ffprobe-tile-*,tile-randomized}
 JOBS="auto"  # Parallel jobs for randomized tile compositing
 DEBUG="false"  # Enable shell tracing and raw tool output
@@ -96,14 +96,14 @@ _mpv_img_tricks_clear_tool_caches() {
   local base="${HOME}/.cache/mpv-img-tricks"
   local removed="false"
   local d
-  for d in "${base}/ffprobe-tile-v1" "${base}/ffprobe-tile-v2" "${base}/ffprobe-tile-v3" "${base}/ffprobe-tile-v4" "${base}/tile-randomized"; do
+  for d in "${base}/ffprobe-tile-v1" "${base}/ffprobe-tile-v2" "${base}/ffprobe-tile-v3" "${base}/ffprobe-tile-v4" "${base}/ffprobe-tile-v5" "${base}/tile-randomized"; do
     if [[ -e "$d" ]]; then
       rm -rf "$d"
       removed="true"
     fi
   done
   if [[ "$removed" == "true" ]]; then
-    say_phase "phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 tile-randomized"
+    say_phase "phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 ffprobe-tile-v5 tile-randomized"
   else
     say_phase "phase=cache msg=cleared noop dir=${base}"
   fi
@@ -128,23 +128,24 @@ run_composite_ffmpeg() {
 }
 
 # ffprobe for tile validate-media: same nice + single thread pattern as composite ffmpeg.
+# Do not pass -nostdin (ffmpeg-only; ffprobe exits error on FFmpeg 8+ and every file looked "bad").
 # Prefer any video stream (not only v:0); still images: demux-only fallback when extension matches.
 run_ffprobe_probe_tile_validate() {
   local media="$1"
   local vstreams
-  vstreams=$(run_under_nice ffprobe -nostdin -v error -threads 1 \
+  vstreams=$(run_under_nice ffprobe -v error -threads 1 \
     -select_streams v -show_entries stream=codec_type -of csv=p=0 "$media" 2>/dev/null) || true
   if [[ -n "$vstreams" ]]; then
     return 0
   fi
-  if is_probably_image_file "$media" && run_under_nice ffprobe -nostdin -v error -threads 1 -i "$media" >/dev/null 2>&1; then
+  if is_probably_image_file "$media" && run_under_nice ffprobe -v error -threads 1 -i "$media" >/dev/null 2>&1; then
     return 0
   fi
-  if is_probably_video_file "$media" && run_under_nice ffprobe -nostdin -v error -threads 1 -i "$media" >/dev/null 2>&1; then
+  if is_probably_video_file "$media" && run_under_nice ffprobe -v error -threads 1 -i "$media" >/dev/null 2>&1; then
     return 0
   fi
   # Recovered / odd extensions: if ffprobe can demux at all, keep it (tile will fail later if truly bad).
-  if run_under_nice ffprobe -nostdin -v error -threads 1 -i "$media" >/dev/null 2>&1; then
+  if run_under_nice ffprobe -v error -threads 1 -i "$media" >/dev/null 2>&1; then
     return 0
   fi
   return 1
@@ -203,7 +204,7 @@ resolve_parallel_job_count_for_tile() {
   fi
 }
 
-# Hex id for ffprobe-tile-v4 cache filenames and composite manifests (no paths).
+# Hex id for ffprobe-tile-v5 cache filenames and composite manifests (no paths).
 # Always mix stat + MD5(first 64KiB) so files never share one cache entry on inode-0 FSes or
 # when parallel jobs would otherwise race the same cache filename; stat-only keys caused mass false skips.
 _mpv_img_tricks_media_probe_cache_key_hex() {
@@ -222,7 +223,7 @@ _mpv_img_tricks_media_probe_cache_key_hex() {
   fi
   [ -z "$sample_hash" ] && sample_hash="_"
 
-  h=$(printf '%s\0%s\0%s' "ffprobe-tile-v4" "${id:-_}" "$sample_hash" | probe_cache_md5_hex)
+  h=$(printf '%s\0%s\0%s' "ffprobe-tile-v5" "${id:-_}" "$sample_hash" | probe_cache_md5_hex)
   printf '%s' "$h"
 }
 
@@ -1315,7 +1316,7 @@ filter_tile_readable_inputs() {
     return 1
   fi
 
-  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v4"
+  CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v5"
   if [ -n "${MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE:-}" ]; then
     CACHE_ROOT=""
   fi
