@@ -125,6 +125,10 @@ run_ffprobe_probe_tile_validate() {
   if is_probably_video_file "$media" && run_under_nice ffprobe -nostdin -v error -threads 1 -i "$media" >/dev/null 2>&1; then
     return 0
   fi
+  # Recovered / odd extensions: if ffprobe can demux at all, keep it (tile will fail later if truly bad).
+  if run_under_nice ffprobe -nostdin -v error -threads 1 -i "$media" >/dev/null 2>&1; then
+    return 0
+  fi
   return 1
 }
 
@@ -1268,11 +1272,20 @@ filter_tile_readable_inputs() {
   fi
 
   CACHE_ROOT="${HOME}/.cache/mpv-img-tricks/ffprobe-tile-v2"
-  mkdir -p "$CACHE_ROOT"
+  if [ -n "${MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE:-}" ]; then
+    CACHE_ROOT=""
+  fi
+  if [ -n "$CACHE_ROOT" ]; then
+    mkdir -p "$CACHE_ROOT"
+  fi
   WORK_DIR="$(mktemp -d)"
 
   resolve_parallel_job_count_for_tile
-  say_phase "phase=validate-media msg=ffprobe_scan total_candidates=${total_lines} parallel_jobs=${PARALLEL_JOBS} cache_dir=${CACHE_ROOT}"
+  if [ -n "$CACHE_ROOT" ]; then
+    say_phase "phase=validate-media msg=ffprobe_scan total_candidates=${total_lines} parallel_jobs=${PARALLEL_JOBS} cache_dir=${CACHE_ROOT}"
+  else
+    say_phase "phase=validate-media msg=ffprobe_scan total_candidates=${total_lines} parallel_jobs=${PARALLEL_JOBS} cache_dir=disabled"
+  fi
 
   for ((idx = 0; idx < total_lines; idx++)); do
     if [ "$PARALLEL_JOBS" -gt 1 ]; then

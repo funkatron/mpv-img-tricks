@@ -83,6 +83,7 @@ A published wheel contains only the Python package. **Running the full tool stil
 | `MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR` | When set, `scripts/slideshow.sh` uses this directory if no image path is passed on the command line (personal automation only). |
 | `MPV_IMG_TRICKS_CONFIG` | Optional path to a **JSON** file with default CLI values (see below). If unset and `~/.config/mpv-img-tricks/config.json` exists, that file is loaded. |
 | `MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS` | If non-empty, **all** slideshow mpv launches skip auto-loading **`mpv-scripts/slideshow-bindings.lua`** (overrides `--use-slideshow-bindings yes` on **`mpv-pipeline.sh`**). |
+| `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE` | If non-empty, **`--effect tile`** validate-media does **not** read or write **`~/.cache/mpv-img-tricks/ffprobe-tile-v2`** (forces live **`ffprobe`** every run; use while debugging “everything skipped”). |
 
 ## Optional JSON defaults
 
@@ -208,3 +209,12 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
 **Unit tests fail immediately**
 
 - Ensure `uv` is on `PATH`. Tests run `uv sync` (preferring `--frozen` when `uv.lock` is present).
+
+**Tile validate-media skipped every file (`kept=0`)**
+
+- Clear the probe cache and retry (old entries or a bad first run can persist until files change):  
+  `rm -rf ~/.cache/mpv-img-tricks/ffprobe-tile-v1 ~/.cache/mpv-img-tricks/ffprobe-tile-v2`
+- Or bypass the cache once:  
+  `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE=1 slideshow … --effect tile …`
+- If it still skips all paths, test one file:  
+  `ffprobe -v error -i /path/to/one/image` — non-zero exit means **ffprobe/ffmpeg** cannot read that media (corrupt format, permissions, or missing codecs).
