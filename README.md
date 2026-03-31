@@ -12,6 +12,8 @@ This is a personal utility project. Breaking CLI changes are acceptable when the
 
 **Architecture and maintenance:** [docs/discovery.md](docs/discovery.md) — how the Python CLI maps to Bash backends, test coverage, and where to change behavior.
 
+**Improvement ideas (prioritized):** [docs/recommendations.md](docs/recommendations.md) — UX, testing/CI, portability, Python vs Bash boundary, security, repo hygiene.
+
 ## Requirements (summary)
 
 - **[uv](https://docs.astral.sh/uv/)** on your `PATH` for `./slideshow` and for `./tests/run-unit.sh`.

@@ -1,6 +1,6 @@
 # mpv-img-tricks — discovery doc
 
-Internal orientation for collaborators and future you. Summarizes repository layout, how the CLI maps to Bash backends, tests, and sensible next steps. **For install and day-to-day use, start with [setup.md](setup.md) and the repo [README](../README.md).**
+Internal orientation for collaborators and future you. Summarizes repository layout, how the CLI maps to Bash backends, tests, and sensible next steps. **For install and day-to-day use, start with [setup.md](setup.md) and the repo [README](../README.md).** Prioritized improvement ideas: [recommendations.md](recommendations.md).
 
 *Last reviewed from git and tree: 2026-03-31 (includes §12 deep dive on `img-effects.sh`).*
 
@@ -153,7 +153,7 @@ Full prerequisites and env vars: **[setup.md](setup.md)**.
 1. **CI:** Add a workflow: checkout → `uv sync --frozen` → `./tests/run-unit.sh` (with ripgrep available).
 2. **Docs:** README already links here under “Architecture and maintenance”; extend §12 when you change dispatch or tile behavior.
 3. **Tests:** Add one focused test per fragile area you touch next (e.g. sound trim, watch) rather than boiling the ocean.
-4. **Roadmap:** There are no `TODO`/`FIXME` markers in-tree; track intentional follow-ups in issues or short comments near the relevant `case` branches in `img-effects.sh` if helpful.
+4. **Roadmap:** Broader themes (UX, portability, `eval` removal, repo hygiene): see [recommendations.md](recommendations.md). There are no `TODO`/`FIXME` markers in-tree; track intentional follow-ups in issues or short comments near the relevant `case` branches in `img-effects.sh` if helpful.
 
 ---
 
