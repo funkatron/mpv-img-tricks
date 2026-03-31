@@ -66,6 +66,7 @@ QUIET="false"
 VERBOSE_FFMPEG="false"
 PHASE_PREFIX="mpv-img-tricks:"
 BACKGROUND_AUDIO_PID=""  # Background mpv PID for continuous tile audio
+TILE_DEFER_BACKGROUND_AUDIO=""  # tile + --sound: start background mpv on first run_mpv, not during prep
 PREPARED_SOUND_FILE=""  # Resolved/processed sound file path used at runtime
 TEMP_SOUND_FILE=""  # Temp trimmed sound file for cleanup
 TMPLIST=""  # Temp list file used during image discovery
@@ -885,9 +886,11 @@ tile_effect() {
     configure_tile_video_encoder
   fi
   if [ -n "$SOUND_FILE" ]; then
-    start_background_audio_loop
+    # Defer audio until the first slideshow mpv launches — avoids music during ffmpeg compositing.
+    TILE_DEFER_BACKGROUND_AUDIO=1
     AUDIO_ARGS=("--no-audio")
   else
+    TILE_DEFER_BACKGROUND_AUDIO=
     build_audio_args
   fi
 
@@ -907,6 +910,10 @@ tile_effect() {
 }
 
 run_mpv() {
+  if [[ "${TILE_DEFER_BACKGROUND_AUDIO:-}" == "1" ]] && [[ -n "${SOUND_FILE:-}" ]]; then
+    start_background_audio_loop || return 1
+    TILE_DEFER_BACKGROUND_AUDIO=
+  fi
   # Same slideshow-bindings policy as mpv-pipeline.sh (see mpv_slideshow_bindings.sh).
   local -a mpv_cmd=(mpv)
   local repo_root
