@@ -124,7 +124,7 @@ run_composite_ffmpeg() {
     logl=info
     stats=(-stats)
   fi
-  run_under_nice ffmpeg -nostdin -loglevel "$logl" "${stats[@]}" -threads 1 "$@"
+  run_under_nice ffmpeg -nostdin -loglevel "$logl" "${stats[@]+"${stats[@]}"}" -threads 1 "$@"
 }
 
 # ffprobe for tile validate-media: same nice + single thread pattern as composite ffmpeg.
@@ -1181,7 +1181,7 @@ run_ffmpeg_effect_hevc() {
     logl=info
     stats=(-stats)
   fi
-  ffmpeg -nostdin -loglevel "$logl" "${stats[@]}" "${FFMPEG_MEM_ARR[@]}" "${FF_EFFECT_INPUTS[@]}" "${VIDEO_A_EXTRA[@]}" \
+  ffmpeg -nostdin -loglevel "$logl" "${stats[@]+"${stats[@]}"}" "${FFMPEG_MEM_ARR[@]}" "${FF_EFFECT_INPUTS[@]}" "${VIDEO_A_EXTRA[@]+"${VIDEO_A_EXTRA[@]}"}" \
     -filter_complex "$fcx" \
     -map "[out]" -c:v hevc_videotoolbox -tag:v hvc1 -b:v "$br" -pix_fmt yuv420p \
     "${VIDEO_MAP_EXTRA[@]}" -r "$FPS" -y "$out"
