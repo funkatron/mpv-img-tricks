@@ -5,15 +5,15 @@ Concise orientation for coding assistants. End-user install and flags: [docs/set
 ## What this repo is
 
 - **Pre-alpha** utility: live image slideshows (**mpv**), optional **ffmpeg** flipbook render, **tile** mode via Bash.
-- **Python** (`mpv_img_tricks/`): CLI, validation, **`plain_render`** (subprocess ffmpeg), routing to Bash for **basic** live and **tile**.
-- **Bash** (`scripts/`): **`slideshow.sh`**, **`img-effects.sh`** (tile only), **`mpv-pipeline.sh`**, **`images-to-video.sh`** (legacy / optional direct use).
+- **Python** (`mpv_img_tricks/`): CLI, validation, **`plain_render`**, **basic live** (discovery + optional watch + **`mpv_pipeline`** subprocess **mpv**), **tile** still shells out to **`img-effects.sh`**.
+- **Bash** (`scripts/`): **`slideshow.sh`** (thin shim → `uv run slideshow live`), **`img-effects.sh`** (tile only), **`mpv-pipeline.sh`** (reference / tests), **`images-to-video.sh`** (legacy / optional direct use).
 
 ## Entrypoints
 
 - Users run **`slideshow`** (e.g. `./slideshow` after `uv sync`, or `uv run slideshow`). Do not document **`scripts/*.sh`** as primary entrypoints.
 - Routing summary:
-  - **`live`** + **`basic`** → `scripts/slideshow.sh`
-  - **`live`** + **`tile`** → `scripts/img-effects.sh`
+  - **`live`** + **`basic`** → Python **`mpv_img_tricks.pipelines.basic_slideshow`** (+ **`mpv_pipeline`**)
+  - **`live`** + **`tile`** → `scripts/img-effects.sh` (via **`pipelines.tile_live`**)
   - **`--render`** (no **`--effect`**) → Python **`plain_render`** (not `images-to-video.sh` from the CLI)
   - **`--effect`** with **`--render`** is rejected
 
@@ -25,7 +25,10 @@ Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks
 |------|------|
 | `mpv_img_tricks/cli.py` | CLI, incompatible-arg checks |
 | `mpv_img_tricks/pipelines/plain_render.py` | Plain flipbook render |
-| `mpv_img_tricks/pipelines/live.py` | Live backend argv + subprocess |
+| `mpv_img_tricks/pipelines/live.py` | Dispatch: basic vs tile |
+| `mpv_img_tricks/pipelines/basic_slideshow.py` | Basic live: discovery, watch, mpv |
+| `mpv_img_tricks/pipelines/tile_live.py` | Tile: argv + subprocess **img-effects.sh** |
+| `mpv_img_tricks/mpv_pipeline.py` | **mpv** argv / multi-instance / master bridge (was **mpv-pipeline.sh**) |
 | `mpv_img_tricks/paths.py` | Resolve repo root / `scripts/` (`MPV_IMG_TRICKS_ROOT`, `MPV_IMG_TRICKS_SCRIPTS_DIR`) |
 | `scripts/mpv-pipeline.sh` | Shared mpv launch (scaling, instances, flags) |
 | `scripts/lib/` | Shared Bash: `constants`, `path`, `pipeline`, `validate`, **`mpv_slideshow_bindings.sh`** |

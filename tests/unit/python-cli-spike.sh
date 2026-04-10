@@ -28,7 +28,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 MEDIA_DIR="${WORK_DIR}/media"
 BACKEND_DIR="${WORK_DIR}/backends"
 LOG_FILE="${WORK_DIR}/backend.log"
-mkdir -p "$MEDIA_DIR" "$BACKEND_DIR"
+mkdir -p "$MEDIA_DIR" "$BACKEND_DIR" "${WORK_DIR}/bin"
 # Minimal valid 1x1 PNGs so plain --render (real ffmpeg) succeeds when exercised.
 python3 - <<PY
 import base64
@@ -61,8 +61,16 @@ EOF
 
 chmod +x "${BACKEND_DIR}/slideshow.sh" "${BACKEND_DIR}/img-effects.sh" "${BACKEND_DIR}/images-to-video.sh"
 
+cat > "${WORK_DIR}/bin/mpv" <<'EOF'
+#!/usr/bin/env bash
+printf 'mpv %s\n' "$*" >> "$BACKEND_LOG"
+exit 0
+EOF
+chmod +x "${WORK_DIR}/bin/mpv"
+
 export BACKEND_LOG="${LOG_FILE}"
 export MPV_IMG_TRICKS_SCRIPTS_DIR="${BACKEND_DIR}"
+export PATH="${WORK_DIR}/bin:${PATH}"
 
 slideshow --help >/dev/null
 slideshow live --help >"${WORK_DIR}/help.txt"
@@ -73,24 +81,30 @@ assert_contains "${WORK_DIR}/help.txt" "dry-run"
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --dry-run --duration 0.01 --scale-mode fill >"${WORK_DIR}/dry.txt"
-assert_contains "${WORK_DIR}/dry.txt" "slideshow.sh"
-assert_contains "${WORK_DIR}/dry.txt" "${MEDIA_DIR}"
+assert_contains "${WORK_DIR}/dry.txt" "mpv"
+assert_contains "${WORK_DIR}/dry.txt" "--playlist="
+assert_contains "${WORK_DIR}/dry.txt" "--image-display-duration=0.01"
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1 --order natural"
+assert_contains "$LOG_FILE" "mpv "
+assert_contains "$LOG_FILE" "--image-display-duration=0.01"
+assert_contains "$LOG_FILE" "--playlist="
 
 : > "$LOG_FILE"
 slideshow "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1 --order natural"
+assert_contains "$LOG_FILE" "mpv "
+assert_contains "$LOG_FILE" "--playlist="
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --duration 0.01 --fill >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1 --order natural"
+assert_contains "$LOG_FILE" "mpv "
+assert_contains "$LOG_FILE" "--panscan=1.0"
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --duration 0.01 --fit >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1 --order natural"
+assert_contains "$LOG_FILE" "mpv "
+assert_contains "$LOG_FILE" "--panscan=0.0"
 
 if slideshow live "$MEDIA_DIR" --fit --fill >/dev/null 2>"${WORK_DIR}/mx.err"; then
   fail "expected --fit and --fill together to fail"
@@ -111,7 +125,8 @@ if ! slideshow live "$MEDIA_DIR" --clear-cache --duration 0.01 >/dev/null 2>"${W
   fail "expected --clear-cache with basic live to succeed"
 fi
 assert_contains "${WORK_DIR}/clear-basic.err" "phase=cache"
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1 --order natural"
+assert_contains "$LOG_FILE" "mpv "
+assert_contains "$LOG_FILE" "--playlist="
 
 : > "$LOG_FILE"
 if ! slideshow live "$MEDIA_DIR" --render --output out.mp4 --clear-cache >/dev/null 2>"${WORK_DIR}/clear-render.err"; then
@@ -135,10 +150,8 @@ assert_contains "${WORK_DIR}/er2.log" "invalid choice"
 
 mkdir -p "${MEDIA_DIR}/sub"
 slideshow live "$MEDIA_DIR" "${MEDIA_DIR}/sub" --dry-run --duration 0.01 >"${WORK_DIR}/dry-multi.txt"
-assert_contains "${WORK_DIR}/dry-multi.txt" "slideshow.sh"
-assert_contains "${WORK_DIR}/dry-multi.txt" "${MEDIA_DIR}"
-assert_contains "${WORK_DIR}/dry-multi.txt" "${MEDIA_DIR}/sub"
-assert_contains "${WORK_DIR}/dry-multi.txt" "--order natural"
+assert_contains "${WORK_DIR}/dry-multi.txt" "mpv"
+assert_contains "${WORK_DIR}/dry-multi.txt" "--playlist="
 
 if slideshow live "$MEDIA_DIR" "${MEDIA_DIR}/sub" --watch >/dev/null 2>"${WORK_DIR}/watch.err"; then
   fail "expected --watch with multiple sources to fail"

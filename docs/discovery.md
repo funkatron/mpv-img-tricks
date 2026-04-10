@@ -40,20 +40,20 @@ High-level patterns from recent commits (not an exhaustive changelog):
 
 ### 4.1 Control flow
 
-Python **only** parses arguments and runs backends with `subprocess`. Backends own all mpv/ffmpeg invocation.
+The CLI parses arguments; **basic live** runs **mpv** from Python (**`basic_slideshow`** + **`mpv_pipeline`**); **tile** still shells out to **`img-effects.sh`**; plain **`--render`** uses Python + ffmpeg.
 
 ```text
 ./slideshow  →  uv run slideshow  →  mpv_img_tricks.cli
                                               │
                     ┌─────────────────────────┼─────────────────────────┐
                     ▼                         ▼                         ▼
-           scripts/slideshow.sh     scripts/img-effects.sh    plain_render (Python + ffmpeg)
-           (basic live path)        (tile only)                 (--render, no --effect)
+      basic_slideshow + mpv_pipeline     img-effects.sh           plain_render (Python + ffmpeg)
+      (subprocess mpv)                    (tile only)              (--render, no --effect)
 ```
 
 - **`slideshow …`** with **`--render`** and **no** `--effect` → **`mpv_img_tricks.pipelines.plain_render`** (not the legacy `images-to-video.sh` script).
 - **`slideshow …`** with **`--render`** and **`--effect`** → **rejected** by the CLI.
-- **`slideshow …`** without `--render`: **`basic`** → `slideshow.sh`; **`tile`** → `img-effects.sh`.
+- **`slideshow …`** without `--render`: **`basic`** → **`pipelines.basic_slideshow`**; **`tile`** → `img-effects.sh`.
 
 ### 4.2 Repo and scripts resolution
 
@@ -187,30 +187,27 @@ Use this diagram for package-level routing (tile remains Bash-heavy; plain rende
 
 ## 12. Deep dive — `img-effects.sh` tile machinery
 
-**Scope:** `img-effects.sh` is **tile-only** (non-tile ffmpeg presets and live basic/chaos paths were removed). **Basic** live stays in **`slideshow.sh`**. **Plain `--render`** is **`mpv_img_tricks.pipelines.plain_render`**.
+**Scope:** `img-effects.sh` is **tile-only** (non-tile ffmpeg presets and live basic/chaos paths were removed). **Basic** live is **`mpv_img_tricks.pipelines.basic_slideshow`** (mpv parity with former **`mpv-pipeline.sh`**). **`scripts/slideshow.sh`** is a thin shim to **`uv run slideshow live`**. **Plain `--render`** is **`mpv_img_tricks.pipelines.plain_render`**.
 
 ### 12.1 CLI routing (recap)
 
 | User flow | Backend | Notes |
 |-----------|---------|--------|
-| `slideshow live …` (no `--effect`, not `--render`) | `slideshow.sh` | Basic live |
+| `slideshow live …` (no `--effect`, not `--render`) | Python `basic_slideshow` | Basic live (subprocess **mpv**) |
 | `slideshow live … --effect tile` | `img-effects.sh` | Tile §12.6–§12.8 |
 | `slideshow live … --render` (no `--effect`) | Python `plain_render` | Flipbook |
 | `slideshow live … --render` + `--effect` | — | **Rejected** by CLI |
 
 **Direct `img-effects.sh`:** first positional must be **`tile`** (script exits otherwise).
 
-### 12.2 `slideshow.sh` — what “basic live” actually does
+### 12.2 Basic live (Python)
 
-After parsing args and resolving `mpv-pipeline.sh`, the script:
+`mpv_img_tricks.pipelines.basic_slideshow` + `mpv_img_tricks.mpv_pipeline`:
 
-1. Builds `TMPLIST` via **`mpv_img_tricks_discover_sources_to_playlist`** in **`scripts/lib/discovery.sh`** (one or more sources, recursive discovery, **`--order`**).
-2. Calls `build_pipeline_common_args` with **fullscreen `yes`** and playlist **loop mode `playlist`** (not `none`).
-3. Adds `--shuffle` according to `--shuffle`.
-4. Optionally installs **watch mode** (`fswatch`) with an IPC socket for `mpv-pipeline.sh`.
-5. Runs `"$MPV_PIPELINE" "${PIPELINE_ARGS[@]}"` — no `exec`; watch subprocess is stopped afterward.
+1. Builds the playlist via **`media_discovery.discover_sources_to_playlist`** (parity with **`scripts/lib/discovery.sh`**: sources, recursive vs top-level, **`--order`**).
+2. Launches **mpv** with **fullscreen**, **playlist loop**, scale flags from **`--scale-mode`**, optional **shuffle**, optional **watch** (`fswatch` + IPC `loadfile` / `playlist-pos`, instances **1** only), and **multi-instance** + **master-control bridge** when **`--instances` > 1** (parity with **`mpv-pipeline.sh`**).
 
-So **basic live** is “full-screen looping playlist + optional shuffle + optional watch,” all through the shared **canonical runner** (`mpv-pipeline.sh`).
+`scripts/slideshow.sh` is only a compatibility shim: **`exec uv run slideshow live "$@"`**.
 
 ### 12.3 Top-to-bottom order inside `img-effects.sh` (tile)
 

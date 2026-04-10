@@ -1,7 +1,7 @@
 """Unified CLI for mpv-img-tricks.
 
-Argument parsing lives here; execution delegates to Python pipelines (plain render)
-or Bash backends under ``scripts/`` (basic live slideshow, tile).
+Argument parsing lives here; ``live`` + **basic** uses Python (mpv); **tile** still
+delegates to ``scripts/img-effects.sh``; plain ``--render`` uses Python + ffmpeg.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from mpv_img_tricks.config import live_subparser_defaults, load_config
 from mpv_img_tricks.pipelines import dispatch_live, dispatch_plain_render
-from mpv_img_tricks.pipelines.live import build_live_backend_command
+from mpv_img_tricks.pipelines.live import format_live_dry_run
 
 LIVE_EFFECTS = frozenset({"basic", "tile"})
 LIVE_EFFECT_CHOICES = sorted(LIVE_EFFECTS)
@@ -248,7 +248,11 @@ def handle_live(args: Namespace, parser: argparse.ArgumentParser) -> int:
         if args.render:
             print(build_plain_render_dry_run_line(args))
             return 0
-        print(shlex.join(build_live_backend_command(args)))
+        line = format_live_dry_run(args)
+        if line is None:
+            print("Error: no images found for dry-run sources", file=sys.stderr)
+            return 1
+        print(line)
         return 0
 
     if args.render:

@@ -96,13 +96,13 @@ Examples:
 
 ## Available modes
 
-- **basic** (default) — sequential live slideshow via `scripts/slideshow.sh`
+- **basic** (default) — sequential live slideshow in Python (**subprocess `mpv`**; see **`mpv_img_tricks/pipelines/basic_slideshow.py`**)
 - **tile** — live tiled grid via `scripts/img-effects.sh` (only effect backend)
 - **`--render`** — flipbook export via **`mpv_img_tricks`** (`plain_render`); **`--effect` is not allowed** with **`--render`**
 
 ## Implementation note
 
-The CLI is **`mpv_img_tricks`**; plain **`--render`** runs in Python. **`slideshow.sh`** and **`img-effects.sh`** (tile only) remain Bash backends for mpv orchestration.
+The CLI is **`mpv_img_tricks`**; **basic live** and plain **`--render`** run in Python. **`img-effects.sh`** (tile only) remains the Bash backend for tiled mpv orchestration; **`scripts/slideshow.sh`** is a thin shim to the same **`slideshow live`** CLI.
 
 Live key bindings come from [`mpv-scripts/slideshow-bindings.lua`](mpv-scripts/slideshow-bindings.lua). Set **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`** (non-empty) to skip loading them on all slideshow mpv launches—[full env table](docs/setup.md#environment-variables). **Syncing / diffing with `~/.config/mpv`:** [docs/setup.md](docs/setup.md#mpv-keyboard-shortcuts).
 
