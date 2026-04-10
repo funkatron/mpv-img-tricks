@@ -1,29 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# mpv-img-tricks: Unified script with modular effects (invoked by ./slideshow live).
-# End users: ./slideshow live <dir> --effect <name> [options]
+# mpv-img-tricks: Tile slideshow backend (invoked by ./slideshow live --effect tile).
+# End users: ./slideshow live <dir> --effect tile [options]
 # This file is the Bash backend; do not treat it as a public entrypoint.
 #
-# Effects:
-#   basic     - Simple slideshow
-#   chaos     - Shuffled rapid-fire
-#   ken-burns - Smooth zoom/pan transitions
-#   crossfade - Smooth blending between images
-#   glitch    - Datamosh-style corruption effects
-#   acid      - Psychedelic color shifting
-#   reality   - Physics-breaking impossible effects
-#   kaleido   - Kaleidoscope patterns
-#   matrix    - Matrix rain effects
-#   liquid    - Liquid distortion morphing
-#   tile      - Tile small groups of images in a grid
-#
 # Examples:
-#   img-effects basic ~/pics
-#   img-effects chaos ~/pics --duration 0.02
-#   img-effects ken-burns ~/pics --duration 3 --output slideshow.mp4
-#   img-effects acid ~/pics --resolution 1920x1080
 #   img-effects tile ~/pics --grid 2x2 --spacing 12
+#   img-effects tile ~/pics --randomize
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SCRIPT_SOURCE" ]]; do
@@ -33,18 +17,17 @@ while [[ -L "$SCRIPT_SOURCE" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 source "${SCRIPT_DIR}/lib/path.sh"
-source "${SCRIPT_DIR}/lib/pipeline.sh"
 source "${SCRIPT_DIR}/lib/validate.sh"
 source "${SCRIPT_DIR}/lib/constants.sh"
 source "${SCRIPT_DIR}/lib/mpv_slideshow_bindings.sh"
+source "${SCRIPT_DIR}/lib/discovery.sh"
 
 # Default values
-EFFECT="${1:-basic}"
+EFFECT="${1:-tile}"
 DURATION="${DEFAULT_SLIDESHOW_DURATION_SECONDS}"
 OUTPUT=""
 RESOLUTION="1920x1080"
 FPS="30"
-LIMIT="5"  # Default limit for video effects
 SCALE_MODE="fit"  # fit|fill scaling behavior for mpv/tile paths
 GRID="2x2"  # Default grid size for tile effect
 SPACING="0"  # Pixel gap between tiles in tile effect
@@ -61,7 +44,8 @@ DEBUG="false"  # Enable shell tracing and raw tool output
 SOUND_FILE=""  # Optional sound file during slideshow playback
 SOUND_TRIM_DB="-45"  # Leading silence trim threshold in dB
 MAX_FILES=""  # Optional cap on discovered images
-FILE_ORDER="natural"  # natural (sort -V) or om (oldest mtime first)
+FILE_ORDER="natural"  # natural | om (oldest mtime first) | nm (newest mtime first)
+SOURCES=()
 FFMPEG_MEM_ARR=(-threads 1 -filter_threads 1 -filter_complex_threads 1)  # Keep ffmpeg memory usage predictable
 QUIET="false"
 VERBOSE_FFMPEG="false"
@@ -83,7 +67,6 @@ TILE_VIDEO_ENCODER_OVERRIDE="auto"  # auto|hevc_videotoolbox|libx265|libx264
 TILE_VIDEO_ENCODER_READY="false"  # Whether animated tile encoder preference was initialized
 TILE_VIDEO_ENCODER_NAME=""  # Selected encoder name for animated tile composites
 TILE_VIDEO_CODEC_ARGS=()  # ffmpeg codec args for animated tile composites
-FF_EFFECT_INPUTS=()  # Populated before run_ffmpeg_effect_hevc (bash 3.x safe; no nameref)
 
 say_phase() {
   if [[ "$QUIET" == "true" ]]; then
@@ -306,6 +289,10 @@ filter_tile_validate_write_cache() {
 }
 
 # Parse command line arguments
+if [[ "$EFFECT" != "tile" ]]; then
+  echo "img-effects.sh: only 'tile' is supported (got: $EFFECT). Use ./slideshow for basic live." >&2
+  exit 1
+fi
 shift  # Remove effect from arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -361,15 +348,6 @@ while [[ $# -gt 0 ]]; do
     --fill)
       SCALE_MODE="fill"
       shift
-      ;;
-    --limit|-l)
-      if [[ "$1" == *"="* ]]; then
-        LIMIT="${1#*=}"
-        shift
-      else
-        LIMIT="$2"
-        shift 2
-      fi
       ;;
     --grid|-g)
       if [[ "$1" == *"="* ]]; then
@@ -536,17 +514,15 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      echo "Usage: $0 <effect> <images_dir_or_glob> [options]"
-      echo "Effects: basic, chaos, ken-burns, crossfade, glitch, acid, reality, kaleido, matrix, liquid, tile"
+      echo "Usage: $0 tile <source> [source ...] [options]"
       echo "Options:"
       echo "  --duration, -d    Duration per image (default: ${DEFAULT_SLIDESHOW_DURATION_SECONDS})"
-      echo "  --output, -o      Output file for video effects"
+      echo "  --output, -o      (reserved; tile plays live composites)"
       echo "  --resolution, -r  Output resolution (default: 1920x1080)"
-      echo "  --fps, -f        Frames per second (default: 30)"
+      echo "  --fps, -f        Frames per second for animated tile (default: 30)"
       echo "  --scale-mode MODE  Image scaling mode: fit or fill (default: fit)"
       echo "  --fit              Alias for --scale-mode fit"
       echo "  --fill             Alias for --scale-mode fill"
-      echo "  --limit, -l      Max images for video effects (default: 5)"
       echo "  --grid, -g       Grid size for tile effect (default: 2x2)"
       echo "  --spacing, -s N  Tile spacing in pixels (default: 0)"
       echo "  --group-size, -gs  Number of images per group for randomization (default: 4)"
@@ -554,7 +530,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --sound, -S FILE   Play sound file during slideshow playback"
       echo "  --sound-trim-db N  Leading silence trim threshold in dB (default: -45)"
       echo "  --max-files, -N N  Use only the first N discovered files"
-      echo "  --order MODE       File ordering: natural (default) or om (oldest mtime first)"
+      echo "  --order MODE       File ordering: natural (default), om (oldest mtime), nm (newest mtime)"
       echo "  --debug            Enable shell trace and raw tool output"
       echo "  --instances, -n N  Launch N mpv instances for live slideshow effects"
       echo "  --display INDEX    Target display index for single instance/master"
@@ -574,10 +550,8 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      # First non-option argument is the directory/glob pattern
-      if [[ -z "${DIR:-}" ]]; then
-        DIR="$1"
-      fi
+      # Non-option arguments are image sources (dirs, files, globs)
+      SOURCES+=("$1")
       shift
       ;;
   esac
@@ -592,8 +566,14 @@ if [ "$DEBUG" = "true" ]; then
   set -x
 fi
 
-# Set default directory if not provided
-DIR="${DIR:-.}"
+# Default source if none provided
+if [ "${#SOURCES[@]}" -eq 0 ]; then
+  SOURCES=(.)
+fi
+
+for i in "${!SOURCES[@]}"; do
+  SOURCES[i]="${SOURCES[$i]/#\~/$HOME}"
+done
 
 if [ -n "$SOUND_FILE" ]; then
   SOUND_FILE="${SOUND_FILE/#\~/$HOME}"
@@ -604,10 +584,6 @@ if [ -n "$SOUND_FILE" ]; then
 fi
 if ! [[ "$SOUND_TRIM_DB" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
   echo "Invalid --sound-trim-db value: $SOUND_TRIM_DB"
-  exit 1
-fi
-if ! [[ "$LIMIT" =~ ^[0-9]+$ ]] || [ "$LIMIT" -lt 1 ]; then
-  echo "Invalid --limit value: $LIMIT (expected positive integer)"
   exit 1
 fi
 case "$SCALE_MODE" in
@@ -653,10 +629,10 @@ if [ -n "$MAX_FILES" ] && ! [[ "$MAX_FILES" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 case "$FILE_ORDER" in
-  natural|om)
+  natural|om|nm)
     ;;
   *)
-    echo "Invalid --order value: $FILE_ORDER (expected: natural or om)"
+    echo "Invalid --order value: $FILE_ORDER (expected: natural, om, or nm)"
     exit 1
     ;;
 esac
@@ -685,50 +661,9 @@ trap cleanup EXIT INT TERM
 WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
 HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
 
-sort_discovered_images() {
-  local input_file="$1"
-  local output_file="$2"
-
-  if [ "$FILE_ORDER" = "natural" ]; then
-    sort -V "$input_file" > "$output_file"
-    return 0
-  fi
-
-  # zsh-like *.png(om): oldest modification time first.
-  while IFS= read -r img; do
-    [ -n "$img" ] || continue
-    mtime=""
-    if mtime=$(stat -f '%m' "$img" 2>/dev/null); then
-      :
-    else
-      mtime=$(stat -c '%Y' "$img" 2>/dev/null || echo "0")
-    fi
-    printf "%s\t%s\n" "$mtime" "$img"
-  done < "$input_file" | sort -n -k1,1 | cut -f2- > "$output_file"
-}
-
 # Create temporary file list
 TMPLIST="$(mktemp)"
-TMPLIST_RAW="$(mktemp)"
-
-# Check if DIR contains glob patterns or is a directory
-if [[ "$DIR" == *"*"* ]]; then
-  # Handle glob patterns - use find instead of ls
-  if [ "$RECURSIVE" = "true" ]; then
-    find "$(dirname "$DIR")" -name "$(basename "$DIR")" -type f 2>/dev/null > "$TMPLIST_RAW"
-  else
-    find "$(dirname "$DIR")" -maxdepth 1 -name "$(basename "$DIR")" -type f 2>/dev/null > "$TMPLIST_RAW"
-  fi
-else
-  # Handle directory path - use find for better reliability
-  if [ "$RECURSIVE" = "true" ]; then
-    find "$DIR" -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null > "$TMPLIST_RAW"
-  else
-    find "$DIR" -maxdepth 1 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) 2>/dev/null > "$TMPLIST_RAW"
-  fi
-fi
-sort_discovered_images "$TMPLIST_RAW" "$TMPLIST"
-rm -f "$TMPLIST_RAW"
+mpv_img_tricks_discover_sources_to_playlist "$TMPLIST" "$FILE_ORDER" "$RECURSIVE" "${SOURCES[@]}"
 
 if [ -n "$MAX_FILES" ] && [ "$MAX_FILES" -gt 0 ]; then
   sed -n "1,${MAX_FILES}p" "$TMPLIST" > "${TMPLIST}.limited"
@@ -736,7 +671,7 @@ if [ -n "$MAX_FILES" ] && [ "$MAX_FILES" -gt 0 ]; then
 fi
 
 if [ ! -s "$TMPLIST" ]; then
-  echo "No images found in $DIR"
+  echo "No images found for sources: ${SOURCES[*]}"
   rm -f "$TMPLIST"
   exit 1
 fi
@@ -745,85 +680,6 @@ TOTAL=$(wc -l < "$TMPLIST")
 say_phase "phase=discover effect=${EFFECT} playlist_lines=${TOTAL}"
 echo "Processing $TOTAL images with '$EFFECT' effect..."
 
-create_random_scale_script() {
-  RANDOM_SCALE_LUA_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/mpv-img-tricks-random-scale.XXXXXX.lua")"
-  cat > "$RANDOM_SCALE_LUA_SCRIPT" << 'EOF'
-function on_file_loaded()
-    if math.random() < 0.5 then
-        mp.set_property("video-scale", "crop")
-    else
-        mp.set_property("video-scale", "fit")
-    end
-end
-EOF
-}
-
-run_live_pipeline_effect() {
-  local mode="$1"
-  local mpv_pipeline
-  local loop_mode
-  local fullscreen_mode
-
-  mpv_pipeline="$(resolve_mpv_pipeline_path "$SCRIPT_SOURCE")"
-  if [ ! -x "$mpv_pipeline" ]; then
-    echo "Canonical runner not executable: $mpv_pipeline"
-    exit 1
-  fi
-
-  case "$mode" in
-    basic)
-      loop_mode="none"
-      fullscreen_mode="no"
-      ;;
-    chaos)
-      loop_mode="playlist"
-      fullscreen_mode="yes"
-      ;;
-    *)
-      echo "Unknown live mode for pipeline: $mode"
-      exit 1
-      ;;
-  esac
-
-  build_audio_args
-  build_pipeline_common_args "$DURATION" "$fullscreen_mode" "$loop_mode" "$SCALE_MODE" "$MPV_INSTANCES" "$MASTER_CONTROL_MODE"
-  local -a pipeline_args=(
-    --playlist "$TMPLIST"
-    "${PIPELINE_COMMON_ARGS[@]}"
-    --debug "$DEBUG"
-    --mpv-arg "--hr-seek=yes"
-    --mpv-arg "--keep-open=no"
-  )
-
-  if [ "$mode" = "chaos" ]; then
-    pipeline_args+=(--shuffle yes)
-  else
-    pipeline_args+=(--shuffle no)
-    pipeline_args+=(--mpv-arg "--playlist-start=0")
-  fi
-
-  if [ -n "$DISPLAY_INDEX" ]; then
-    pipeline_args+=(--display "$DISPLAY_INDEX")
-  fi
-  if [ -n "$DISPLAY_MAP" ]; then
-    pipeline_args+=(--display-map "$DISPLAY_MAP")
-  fi
-
-  if [ "$RANDOM_SCALE" = "true" ]; then
-    create_random_scale_script
-    pipeline_args+=(--extra-script "$RANDOM_SCALE_LUA_SCRIPT")
-  fi
-
-  if [ -n "$SOUND_FILE" ]; then
-    pipeline_args+=(--no-audio no)
-    pipeline_args+=(--mpv-arg "--audio-file=$SOUND_FILE")
-    pipeline_args+=(--mpv-arg "--audio-display=no")
-  else
-    pipeline_args+=(--no-audio yes)
-  fi
-
-  exec "$mpv_pipeline" "${pipeline_args[@]}"
-}
 
 build_tile_cell_filter() {
   local cell_w="$1"
@@ -835,256 +691,6 @@ build_tile_cell_filter() {
   fi
 }
 
-# Effect modules
-basic_effect() {
-  echo "Running basic slideshow..."
-  if [ "$USE_PLAYLIST" = "false" ] && [ "$DEBUG" = "true" ]; then
-    echo "Debug: canonical runner always consumes discovered playlist (legacy --playlist no longer changes basic/chaos behavior)."
-  fi
-  run_live_pipeline_effect "basic"
-}
-
-chaos_effect() {
-  echo "Running chaos slideshow..."
-  if [ "$USE_PLAYLIST" = "false" ] && [ "$DEBUG" = "true" ]; then
-    echo "Debug: canonical runner always consumes discovered playlist (legacy --playlist no longer changes basic/chaos behavior)."
-  fi
-  run_live_pipeline_effect "chaos"
-}
-
-ken_burns_effect() {
-  local out="${OUTPUT:-ken-burns.mp4}"
-  local input_list
-  say_phase "phase=ken-burns msg=creating_video"
-  input_list="$(get_limited_video_list "Ken Burns")"
-
-  # Parse resolution
-  WIDTH=$(echo "$RESOLUTION" | cut -d'x' -f1)
-  HEIGHT=$(echo "$RESOLUTION" | cut -d'x' -f2)
-
-  # zoompan `d` is a frame count; must be a positive integer (not "0.05*30").
-  local zoompan_d
-  zoompan_d=$(awk -v d="$DURATION" -v fps="$FPS" 'BEGIN {
-    n = d * fps
-    if (n < 1) n = 1
-    printf "%d", int(n + 0.5)
-  }')
-
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    PAN_X=$((RANDOM % 200 - 100))
-    PAN_Y=$((RANDOM % 200 - 100))
-    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},zoompan=z='min(zoom+0.0015,1.3)':d=${zoompan_d}:x='iw/2-(iw/zoom/2)+${PAN_X}':y='ih/2-(ih/zoom/2)+${PAN_Y}':s=${WIDTH}x${HEIGHT}[v${i}];"
-    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 15M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "Ken Burns video created: $out"
-  rm -f "$input_list"
-}
-
-glitch_effect() {
-  local out="${OUTPUT:-glitch.mp4}"
-  local input_list
-  say_phase "phase=glitch msg=creating_video"
-  input_list="$(get_limited_video_list "Glitch")"
-
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    EFFECT=$((RANDOM % 3))  # Reduced to 3 simpler effects
-    case $EFFECT in
-      0) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=90:s=2:b=1.5[v${i}];" ;;
-      1) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[g1][g2];[g1]hue=h=0:s=0[g1];[g2]hue=h=180:s=2[g2];[g1][g2]blend=all_mode=difference[v${i}];" ;;
-      2) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=120:s=2:b=0.5[v${i}];" ;;
-    esac
-    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 15M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "Glitch video created: $out"
-  rm -f "$input_list"
-}
-
-acid_effect() {
-  local out="${OUTPUT:-acid-trip.mp4}"
-  local input_list
-  say_phase "phase=acid msg=creating_video"
-  input_list="$(get_limited_video_list "Acid")"
-
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    TRIP=$((RANDOM % 3))  # Simplified to 3 effects
-    case $TRIP in
-      0) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=0:s=3:b=1.5[v${i}];" ;;
-      1) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=120:s=2:b=1.2[v${i}];" ;;
-      2) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},hue=h=240:s=2.5:b=0.8[v${i}];" ;;
-    esac
-    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 15M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "Acid trip video created: $out"
-  rm -f "$input_list"
-}
-
-reality_effect() {
-  local out="${OUTPUT:-reality-break.mp4}"
-  local input_list
-  say_phase "phase=reality msg=creating_video"
-  input_list="$(get_limited_video_list "Reality")"
-
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    EFFECT=$((RANDOM % 4))
-    case $EFFECT in
-      0) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2];[r1]vflip[r1];[r2]hflip[r2];[r1][r2]blend=all_mode=difference[v${i}];" ;;
-      1) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2][r3];[r1]hue=h=0[r1];[r2]hue=h=120[r2];[r3]hue=h=240[r3];[r1][r2]blend=all_mode=screen[r12];[r12][r3]blend=all_mode=multiply[v${i}];" ;;
-      2) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2][r3][r4];[r1]hue=h=0[r1];[r2]hue=h=90[r2];[r3]hue=h=180[r3];[r4]hue=h=270[r4];[r1][r2]blend=all_mode=addition[r12];[r3][r4]blend=all_mode=addition[r34];[r12][r34]blend=all_mode=difference[v${i}];" ;;
-      3) FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[r1][r2];[r1]hue=h=0:s=2[r1];[r2]hue=h=180:s=2[r2];[r1][r2]blend=all_mode=difference[v${i}];" ;;
-    esac
-    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 25M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "Reality broken: $out"
-  rm -f "$input_list"
-}
-
-kaleido_effect() {
-  local out="${OUTPUT:-kaleido.mp4}"
-  local input_list
-  say_phase "phase=kaleido msg=creating_video"
-  input_list="$(get_limited_video_list "Kaleido")"
-
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    # SUPER INTENSE kaleidoscope effect with dramatic hue rotation, high saturation, and brightness
-    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},setsar=1,hue=h=t*180:s=8:b=3.0,eq=contrast=2.0:brightness=0.3:saturation=3.0[v${i}];"
-    ff_in+=(-loop 1 -t 0.5 -stream_loop 1 -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 18M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "INTENSE Kaleidoscope video created: $out"
-  rm -f "$input_list"
-}
-
-matrix_effect() {
-  local out="${OUTPUT:-matrix.mp4}"
-  local input_list
-  say_phase "phase=matrix msg=creating_video"
-  input_list="$(get_limited_video_list "Matrix")"
-
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[m1][m2];[m1]hue=h=120:s=1:b=0.3[m1];[m2]hue=h=0:s=0:b=1[m2];[m1][m2]blend=all_mode=screen[v${i}];"
-    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 16M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "Matrix video created: $out"
-  rm -f "$input_list"
-}
-
-liquid_effect() {
-  local out="${OUTPUT:-liquid.mp4}"
-  local input_list
-  say_phase "phase=liquid msg=creating_video"
-  input_list="$(get_limited_video_list "Liquid")"
-
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},split[l1][l2][l3];[l1]hue=h=45:s=1.5[l1];[l2]hue=h=135:s=1.5[l2];[l3]hue=h=225:s=1.5[l3];[l1][l2]blend=all_mode=addition[l12];[l12][l3]blend=all_mode=addition[v${i}];"
-    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 17M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "Liquid video created: $out"
-  rm -f "$input_list"
-}
 
 tile_effect() {
   say_phase "phase=tile msg=start animate=${ANIMATE_VIDEOS}"
@@ -1156,53 +762,6 @@ build_audio_args() {
   fi
 }
 
-build_video_audio_args() {
-  local audio_input_index="$1"
-  VIDEO_A_EXTRA=()
-  VIDEO_MAP_EXTRA=(-an)
-  if [ -n "$SOUND_FILE" ]; then
-    prepare_sound_file
-    local audio_path="$PREPARED_SOUND_FILE"
-    if [ -z "$audio_path" ] || [ ! -f "$audio_path" ]; then
-      echo "Sound file not playable: $SOUND_FILE"
-      return 1
-    fi
-    VIDEO_A_EXTRA=(-stream_loop -1 -i "$audio_path")
-    VIDEO_MAP_EXTRA=(-map "${audio_input_index}:a" -c:a aac -b:a 192k -shortest)
-  fi
-}
-
-# Uses global FF_EFFECT_INPUTS (populate with ff_in copies before calling).
-run_ffmpeg_effect_hevc() {
-  local out="$1" br="$2" fcx="$3"
-  local logl=error
-  local stats=()
-  if [[ "$VERBOSE_FFMPEG" == "true" || "$DEBUG" == "true" ]]; then
-    logl=info
-    stats=(-stats)
-  fi
-  ffmpeg -nostdin -loglevel "$logl" "${stats[@]+"${stats[@]}"}" "${FFMPEG_MEM_ARR[@]}" "${FF_EFFECT_INPUTS[@]}" "${VIDEO_A_EXTRA[@]+"${VIDEO_A_EXTRA[@]}"}" \
-    -filter_complex "$fcx" \
-    -map "[out]" -c:v hevc_videotoolbox -tag:v hvc1 -b:v "$br" -pix_fmt yuv420p \
-    "${VIDEO_MAP_EXTRA[@]}" -r "$FPS" -y "$out"
-}
-
-get_limited_video_list() {
-  local effect_name="$1"
-  local list_file="${TMPLIST}.video-limit"
-  local total_count
-  local limited_count
-
-  total_count=$(wc -l < "$TMPLIST")
-  sed -n "1,${LIMIT}p" "$TMPLIST" > "$list_file"
-  limited_count=$(wc -l < "$list_file")
-
-  if [ "$limited_count" -lt "$total_count" ]; then
-    echo "Using first ${limited_count}/${total_count} images for ${effect_name} (--limit memory guard)." >&2
-  fi
-
-  echo "$list_file"
-}
 
 prepare_sound_file() {
   PREPARED_SOUND_FILE="$SOUND_FILE"
@@ -2190,87 +1749,8 @@ tile_effect_randomized() {
   fi
 }
 
-crossfade_effect() {
-  local out="${OUTPUT:-crossfade.mp4}"
-  local input_list
-  say_phase "phase=crossfade msg=creating_video"
-  input_list="$(get_limited_video_list "Crossfade")"
 
-  FILTER=""
-  local -a ff_in=()
-  i=0
-
-  while IFS= read -r img; do
-    FILTER="${FILTER}[${i}:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT}[v${i}];"
-    ff_in+=(-loop 1 -t "$DURATION" -i "$img")
-    i=$((i+1))
-  done < "$input_list"
-
-  # Create crossfade transitions between images
-  TRANSITION_FILTER=""
-  for ((j=0; j<i-1; j++)); do
-    TRANSITION_FILTER="${TRANSITION_FILTER}[v${j}][v$((j+1))]blend=all_mode=normal:all_opacity=0.5[t${j}];"
-  done
-
-  CONCAT_FILTER=""
-  for ((j=0; j<i; j++)); do
-    CONCAT_FILTER="${CONCAT_FILTER}[v${j}]"
-  done
-  CONCAT_FILTER="${CONCAT_FILTER}concat=n=${i}:v=1:a=0[out]"
-
-  build_video_audio_args "$i" || return 1
-  FF_EFFECT_INPUTS=("${ff_in[@]}")
-  run_ffmpeg_effect_hevc "$out" 12M "${FILTER}${CONCAT_FILTER}" || return 1
-  echo "Crossfade video created: $out"
-  rm -f "$input_list"
-}
-
-# Main effect dispatcher
-case "$EFFECT" in
-  basic)
-    basic_effect
-    ;;
-  chaos)
-    chaos_effect
-    ;;
-  ken-burns)
-    ken_burns_effect
-    ;;
-  crossfade)
-    crossfade_effect
-    ;;
-  glitch)
-    glitch_effect
-    ;;
-  acid)
-    acid_effect
-    ;;
-  reality)
-    reality_effect
-    ;;
-  kaleido)
-    kaleido_effect
-    ;;
-  matrix)
-    matrix_effect
-    ;;
-  liquid)
-    liquid_effect
-    ;;
-  tile)
-    tile_effect
-    ;;
-  *)
-    echo "Unknown effect: $EFFECT"
-    echo "Available effects: basic, chaos, ken-burns, crossfade, glitch, acid, reality, kaleido, matrix, liquid, tile"
-    exit 1
-    ;;
-esac
+tile_effect
 
 # Cleanup
 rm -f "$TMPLIST"
-
-# Show play command for video outputs
-if [[ -n "$OUTPUT" && "$EFFECT" != "basic" && "$EFFECT" != "chaos" ]]; then
-  echo "Play with: mpv --fs \"$OUTPUT\""
-fi

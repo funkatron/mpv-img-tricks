@@ -8,6 +8,7 @@ build_pipeline_common_args() {
   local instances="$5"
   local master_control="$6"
 
+  # shellcheck disable=SC2034
   PIPELINE_COMMON_ARGS=(
     --duration "$duration"
     --fullscreen "$fullscreen"

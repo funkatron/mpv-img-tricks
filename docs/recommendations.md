@@ -78,7 +78,7 @@ Priorities are opinionated; reorder for your actual goals (e.g. publish to PyPI 
 | `mpv-pipeline.sh` / multi-instance mpv | **Maybe later** | Shell is fine until you need structured IPC |
 | Tile `xstack` graphs, cache layout, bash parallel arrays | **Defer or spike** | High complexity; consider **library** module per effect in Python *after* argv extraction |
 
-**Incremental strategy (maps to R-01 / R-02 and later R-15):** (1) stderr phase + newline progress in Bash; (2) extract one ffmpeg render (`crossfade` or `ken-burns`) to Python subprocess as a pattern; (3) repeat or leave Bash for unmigrated effects.
+**Incremental strategy (maps to R-01 / R-02 and later R-15):** (1) stderr phase + newline progress in Bash tile path; (2) extend Python **`plain_render`** / pipelines for more export modes as needed; (3) optionally port **`img-effects.sh`** tile logic to Python in slices.
 
 ---
 

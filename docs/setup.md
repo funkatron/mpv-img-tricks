@@ -38,6 +38,8 @@ That creates `.venv/` and installs this project in **editable** mode (see `uv.lo
 
 **Default subcommand:** **`live`** — you may run **`slideshow ~/pics`** (or **`./slideshow ~/pics`**) instead of **`slideshow live ~/pics`** as long as the first argument is not a different subcommand name. Behavior is defined in **`mpv_img_tricks/cli.py`** (`DEFAULT_SUBCOMMAND`, `SUBCOMMAND_NAMES`).
 
+**Sources:** Pass **one or more** positional **`SOURCE`** arguments (directories, image files, or glob patterns). Results are merged in order, deduplicated by real path, then ordered with **`--order`**: **`natural`** (version sort of paths, default), **`om`** (oldest modification time first), or **`nm`** (newest first). **`--shuffle`** overrides deterministic ordering (random playback). **`--watch`** requires **exactly one** directory source. Plain **`--render`** (flipbook) accepts the same multiple sources; **`scripts/images-to-video.sh`** also supports the legacy **`dir img_per_sec resolution output`** four-argument form when the second argument looks numeric and the third looks like **`1920x1080`**.
+
 **Package names:** PyPI-style name is `mpv-img-tricks`; Python import is `mpv_img_tricks`.
 
 ### Put `slideshow` on your `PATH`
@@ -116,21 +118,12 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 
 | Mode | Meaning of `--duration` |
 |------|-------------------------|
-| **basic**, **chaos** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
+| **basic** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
 | **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments, ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
-
-### ffmpeg render effects (`--render --effect …`)
-
-For **ken-burns**, **crossfade**, **glitch**, **acid**, **reality**, **kaleido**, **matrix**, **liquid** (anything that builds a video through `img-effects.sh` render helpers):
-
-- Each source image is fed to ffmpeg as **`-loop 1 -t <duration> -i <file>`**, so every still contributes **about `duration` seconds** of decoded video to the filter chain before concatenation.
-- **Ken-burns** also drives **zoompan** with **`d = round(duration × fps)`** frames at the output rate **`--fps`** (at least **1** frame). Changing **`--fps`** changes how many frames that zoom span covers; wall-clock time per image stays tied to **`duration`** and the output **`--fps`**.
-
-Total output length is roughly **(number of images after `--limit`) × duration** per segment, plus encoder startup — use **`ffprobe`** on the result if you need exact timing.
 
 ### Plain render (`--render` without `--effect`)
 
-**`images-to-video.sh`** paces frames with **`--img-per-sec`**, not **`--duration`**. The **`--duration`** flag does not control per-image timing on that path.
+Plain flipbook export runs in **Python** (`mpv_img_tricks.pipelines.plain_render`) and paces frames with **`--img-per-sec`**, not **`--duration`**. The **`--duration`** flag does not control per-image timing on that path. (The legacy script **`images-to-video.sh`** is still in the repo but is not invoked by the **`slideshow`** CLI.)
 
 ## mpv keyboard shortcuts
 
@@ -138,7 +131,7 @@ Live slideshows run **mpv** with the repo script **[`mpv-scripts/slideshow-bindi
 
 | Code path | How bindings load |
 |-----------|-------------------|
-| **basic** / **chaos** | Via **`mpv-pipeline.sh`** (default **`--use-slideshow-bindings yes`**). |
+| **basic** | Via **`mpv-pipeline.sh`** (default **`--use-slideshow-bindings yes`**). |
 | **tile** | **`img-effects.sh`** **`run_mpv`** (same **`scripts/lib/mpv_slideshow_bindings.sh`** policy as the pipeline). |
 | **Disable bindings** | Set **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS=1`** (non-empty disables everywhere; overrides **`--use-slideshow-bindings yes`**). |
 
@@ -184,7 +177,7 @@ From the repository root (after `uv sync`):
 | Command | What it runs |
 |---------|----------------|
 | `./tests/run-unit.sh` | All `tests/unit/*.sh` (same as CI **unit** job). Requires **`uv`** and **`rg`**. |
-| `make test` | Same as above. |
+| `make test` | **`./tests/run-unit.sh`** plus **`uv run pytest -q tests/`**. |
 | `make shellcheck` | Same **scoped** ShellCheck as CI (**shellcheck** on `PATH` required). |
 | `make ci` | **`make test`** then **`make shellcheck`** — use this before a push to match CI. |
 | `make manual-smoke` | **Not in CI.** Real **ffmpeg** encodes using `fixtures/images/`. See [tests/manual/README.md](../tests/manual/README.md). |
@@ -213,7 +206,7 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
 
 **Tile validate-media skipped every file (`kept=0`)**
 
-- From the CLI: add **`--clear-cache`** on any **`live`** run (basic, tile, chaos, plain **`--render`**, or render-with-effect) to remove **`ffprobe-tile-*`** and **`tile-randomized`** under **`~/.cache/mpv-img-tricks/`**, then continue the same run.
+- From the CLI: add **`--clear-cache`** on any **`live`** run (basic, tile, or plain **`--render`**) to remove **`ffprobe-tile-*`** and **`tile-randomized`** under **`~/.cache/mpv-img-tricks/`**, then continue the same run.
 - Or delete manually:  
   `rm -rf ~/.cache/mpv-img-tricks/ffprobe-tile-v1 ~/.cache/mpv-img-tricks/ffprobe-tile-v2 ~/.cache/mpv-img-tricks/ffprobe-tile-v3 ~/.cache/mpv-img-tricks/ffprobe-tile-v4 ~/.cache/mpv-img-tricks/ffprobe-tile-v5`
 - Or bypass the probe cache only (still uses composite cache):  

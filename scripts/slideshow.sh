@@ -1,7 +1,8 @@
 #!/bin/bash
+# shellcheck disable=SC1091
 
 # Bash backend for live slideshow (invoked by ./slideshow live).
-# End users: ./slideshow live <image_dir> [options]
+# End users: ./slideshow live <sources> [options]
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SCRIPT_SOURCE" ]]; do
@@ -18,7 +19,8 @@ source "${SCRIPT_DIR}/lib/constants.sh"
 
 # Default values
 DURATION="${DEFAULT_SLIDESHOW_DURATION_SECONDS}"
-DIR=""
+SOURCES=()
+FILE_ORDER="natural"
 UPSCALE_SMALLER="true"
 SCALE_MODE="fit"  # fit|fill|stretch
 DOWNSCALE_LARGER="true"
@@ -128,8 +130,16 @@ while [[ $# -gt 0 ]]; do
       DISCOVER_RECURSIVE="false"
       shift
       ;;
+    --order)
+      FILE_ORDER="${2:-}"
+      if [[ -z "$FILE_ORDER" ]]; then
+        echo "Error: missing value for $1" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
     --help|-h)
-      echo "Usage: $0 [options] <image_dir>"
+      echo "Usage: $0 [options] <SOURCE> [SOURCE ...]"
       echo ""
       echo "Scaling Options:"
       echo "  --upscale-smaller, -u     Upscale images smaller than window in both dimensions (default)"
@@ -153,6 +163,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --quiet                   Suppress decorative status output"
       echo "  --verbose-ffmpeg          Accepted for CLI parity (no-op here)"
       echo "  --no-recursive-images     Only scan the top-level directory for images (no subfolders)"
+      echo "  --order MODE              Playlist order: natural | om | nm (default: natural; ignored with --shuffle)"
       echo ""
       echo "Examples:"
       echo "  $0 ~/pics --upscale-smaller --scale-mode fill"
@@ -166,40 +177,51 @@ while [[ $# -gt 0 ]]; do
         echo "Use --help for usage information" >&2
         exit 1
       fi
-      if [[ -z "$DIR" ]]; then
-        DIR="$1"
-        shift
-      else
-        echo "Error: unexpected extra argument '$1'" >&2
-        echo "Usage: $0 [options] <image_dir>" >&2
-        exit 1
-      fi
+      SOURCES+=("$1")
+      shift
       ;;
   esac
 done
 
-# Image directory required unless overridden for personal automation.
-if [[ -z "$DIR" ]]; then
+# Image sources required unless overridden for personal automation.
+if [[ ${#SOURCES[@]} -eq 0 ]]; then
   if [[ -n "${MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR:-}" ]]; then
-    DIR="${MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR}"
+    SOURCES=("${MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR}")
   else
-    echo "Error: image directory required (positional argument or MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR)." >&2
+    echo "Error: at least one image source required (positional arguments or MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR)." >&2
     exit 1
   fi
 fi
 
-# Expand tilde if present
-DIR="${DIR/#\~/$HOME}"
+for i in "${!SOURCES[@]}"; do
+  SOURCES[i]="${SOURCES[$i]/#\~/$HOME}"
+done
+
 require_positive_int "$INSTANCES" "--instances" || exit 1
 require_scale_mode "$SCALE_MODE" || exit 1
-if [[ ! -d "$DIR" ]]; then
-  echo "Error: directory not found: $DIR" >&2
-  exit 1
+
+case "$FILE_ORDER" in
+  natural|om|nm) ;;
+  *)
+    echo "Error: invalid --order: $FILE_ORDER (expected natural, om, or nm)" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$WATCH_MODE" == "true" ]]; then
+  if [[ "${#SOURCES[@]}" -ne 1 ]]; then
+    echo "Error: --watch requires exactly one source directory." >&2
+    exit 1
+  fi
+  if [[ ! -d "${SOURCES[0]}" ]]; then
+    echo "Error: --watch requires a directory; got: ${SOURCES[0]}" >&2
+    exit 1
+  fi
 fi
 
 if [[ "$QUIET_MODE" != "true" ]]; then
   echo "🎸 FLEXIBLE IMAGE SLIDESHOW"
-  echo "📁 Directory: $DIR"
+  echo "📁 Sources: ${SOURCES[*]}"
   echo "⏱️  Duration: ${DURATION}s per image"
   echo "🔍 Upscale smaller: $UPSCALE_SMALLER"
   echo "📐 Scale mode: $SCALE_MODE"
@@ -219,13 +241,12 @@ if [[ ! -x "$MPV_PIPELINE" ]]; then
   exit 1
 fi
 
-# Check if directory exists
 # Find images and create a temporary playlist file
 TMPLIST="$(mktemp)"
-discover_images_to_playlist "$DIR" "$TMPLIST" "$DISCOVER_RECURSIVE"
+mpv_img_tricks_discover_sources_to_playlist "$TMPLIST" "$FILE_ORDER" "$DISCOVER_RECURSIVE" "${SOURCES[@]}"
 
 if [[ ! -s "$TMPLIST" ]]; then
-  echo "Error: no images found in $DIR" >&2
+  echo "Error: no images found for sources: ${SOURCES[*]}" >&2
   rm -f "$TMPLIST"
   exit 1
 fi
@@ -359,7 +380,7 @@ if [[ "$WATCH_MODE" == "true" ]]; then
     (
       while true; do
         if [[ "$RECURSIVE_WATCH" == "true" ]]; then
-          fswatch -1 -r -e ".*" -i "\\.(jpg|jpeg|png|webp)$" "$DIR" 2>/dev/null | while read -r newfile; do
+          fswatch -1 -r -e ".*" -i "\\.(jpg|jpeg|png|webp)$" "${SOURCES[0]}" 2>/dev/null | while read -r newfile; do
             # Small delay to ensure file is fully written
             sleep 0.2
             if [[ -f "$newfile" ]] && ! grep -Fxq "$newfile" "$SEEN_FILES" 2>/dev/null; then
@@ -368,7 +389,7 @@ if [[ "$WATCH_MODE" == "true" ]]; then
             fi
           done
         else
-          fswatch -1 -e ".*" -i "\\.(jpg|jpeg|png|webp)$" "$DIR" 2>/dev/null | while read -r newfile; do
+          fswatch -1 -e ".*" -i "\\.(jpg|jpeg|png|webp)$" "${SOURCES[0]}" 2>/dev/null | while read -r newfile; do
             sleep 0.2
             if [[ -f "$newfile" ]] && ! grep -Fxq "$newfile" "$SEEN_FILES" 2>/dev/null; then
               echo "$newfile" >> "$SEEN_FILES"

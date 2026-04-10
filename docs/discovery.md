@@ -30,7 +30,7 @@ High-level patterns from recent commits (not an exhaustive changelog):
 - **Packaging:** `uv` project (`pyproject.toml`, `uv.lock`), `slideshow` console script, root `./slideshow` launcher.
 - **CLI:** Single **`live`** subcommand (default when omitted); default image duration **2.0 s** from `scripts/lib/constants.sh` (also sourced by **`slideshow.sh`** and **`img-effects.sh`**).
 - **Semantics:** Scale modes (`fit` / `fill` / `stretch`) wired through `scripts/mpv-pipeline.sh`; argument order handling in `slideshow.sh`.
-- **Effects / playback:** Tile and chaos paths, optional sound with trim, ffmpeg effect presets, memory/thread guarding for ffmpeg, file ordering (`natural` vs `om`), randomized tile groups and caching.
+- **Effects / playback:** Tile path in **`img-effects.sh`**, optional sound with trim, memory/thread guarding for ffmpeg, file ordering (`natural` / `om` / `nm`), randomized tile groups and caching. Plain **`--render`** is implemented in Python (`mpv_img_tricks.pipelines.plain_render`).
 - **mpv bindings:** Repo **`mpv-scripts/slideshow-bindings.lua`** with a single load policy in **`scripts/lib/mpv_slideshow_bindings.sh`** (shared by **`mpv-pipeline.sh`** and **`img-effects.sh`** `run_mpv`); env **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`** disables everywhere.
 - **Cursor / process:** Three-lens–style guidance may live in **global** `~/.cursor/rules`; the repo may not ship `.cursor/rules` (check git history if you expect a local copy).
 
@@ -47,13 +47,13 @@ Python **only** parses arguments and runs backends with `subprocess`. Backends o
                                               │
                     ┌─────────────────────────┼─────────────────────────┐
                     ▼                         ▼                         ▼
-           scripts/slideshow.sh     scripts/img-effects.sh    scripts/images-to-video.sh
-           (basic live path)        (chaos, tile, effects)    (plain --render, no --effect)
+           scripts/slideshow.sh     scripts/img-effects.sh    plain_render (Python + ffmpeg)
+           (basic live path)        (tile only)                 (--render, no --effect)
 ```
 
-- **`slideshow …`** (i.e. **`live`**, explicitly or by default) with **`--render`** and **no** `--effect` → `images-to-video.sh`.
-- **`slideshow …`** with **`--render`** and an **ffmpeg** effect → `img-effects.sh`.
-- **`slideshow …`** without `--render`: **`basic`** → `slideshow.sh`; **`chaos`** / **`tile`** → `img-effects.sh`.
+- **`slideshow …`** with **`--render`** and **no** `--effect` → **`mpv_img_tricks.pipelines.plain_render`** (not the legacy `images-to-video.sh` script).
+- **`slideshow …`** with **`--render`** and **`--effect`** → **rejected** by the CLI.
+- **`slideshow …`** without `--render`: **`basic`** → `slideshow.sh`; **`tile`** → `img-effects.sh`.
 
 ### 4.2 Repo and scripts resolution
 
@@ -106,15 +106,15 @@ All tests are **Bash** under `tests/unit/*.sh`. Assertions use **`rg` (ripgrep)*
 
 | File | Asserts |
 |------|---------|
-| `python-cli-spike.sh` | Stub backends via `MPV_IMG_TRICKS_SCRIPTS_DIR`; correct argv for live / chaos / tile / plain render / effect render; invalid combo errors |
+| `python-cli-spike.sh` | Stub backends via `MPV_IMG_TRICKS_SCRIPTS_DIR`; argv for live / tile / plain render (Python); invalid `--effect` / `--render` combos |
 | `slideshow-scale-modes.sh` | Fake `mpv` on `PATH`; `mpv-pipeline.sh` scale flags; `slideshow.sh` default duration 2.0 and option/dir order |
 | `img-effects-tile-animation.sh` | Stub ffmpeg/mpv/ffprobe; tile **animated** vs **still** branches; encoder override (`libx264` vs `hevc_videotoolbox`) |
 | `img-effects-tile-fixed-grid.sh` | Fixed **2×1** grid, **lavfi-complex** / **xstack** path (no `--randomize`) |
-| `img-effects-ken-burns.sh` | Stub ffmpeg; **zoompan** graph, **concat**, integer **d=** frame count |
+| `tests/test_media_discovery.py` | pytest: image discovery / ordering |
 
 ### 6.3 Coverage gaps (honest)
 
-- Most ffmpeg **effect** presets (glitch, acid, …) are not asserted.
+- Tile compositing branches are partially covered; edge cases remain manual.
 - `--watch`, `--sound`, multi-display maps, and “tools missing” failures are not systematically tested.
 - Tests are **routing and branch** checks, not pixel-perfect or full media integration tests.
 
@@ -150,8 +150,8 @@ Full prerequisites and env vars: **[setup.md](setup.md)**.
 |------|---------------------|
 | New user-facing flag or help text | `mpv_img_tricks/cli.py` |
 | Basic live-only behavior | `scripts/slideshow.sh`, `scripts/lib/*`, `scripts/mpv-pipeline.sh` |
-| Tile / chaos / ffmpeg effects | `scripts/img-effects.sh` |
-| Plain flipbook export | `scripts/images-to-video.sh` |
+| Tile | `scripts/img-effects.sh` |
+| Plain flipbook export | `mpv_img_tricks.pipelines.plain_render` (legacy: `scripts/images-to-video.sh`) |
 | Defaults (e.g. duration constant) | `scripts/lib/constants.sh` |
 | Install / discovery failures | `mpv_img_tricks/paths.py`, `docs/setup.md` |
 
@@ -174,41 +174,37 @@ flowchart LR
   B["mpv_img_tricks.cli"]
   C["slideshow.sh"]
   D["img-effects.sh"]
-  E["images-to-video.sh"]
+  P["plain_render Python"]
   A --> B
   B -->|"basic live"| C
-  B -->|"chaos, tile, effects"| D
-  B -->|"render, no effect"| E
-  B -->|"render + effect"| D
+  B -->|"tile"| D
+  B -->|"render, no effect"| P
 ```
 
-Use this diagram when explaining the split between “basic pipeline” and “effects monolith.”
+Use this diagram for package-level routing (tile remains Bash-heavy; plain render is Python).
 
 ---
 
-## 12. Deep dive — `img-effects.sh` dispatch and tile machinery
+## 12. Deep dive — `img-effects.sh` tile machinery
 
-This section is the guided read promised in earlier orientation: how effects are chosen, how **chaos** differs from **basic live** (which does not go through this file), and how **tile** branches between cheap **lavfi** playback and expensive **ffmpeg composite** paths.
+**Scope:** `img-effects.sh` is **tile-only** (non-tile ffmpeg presets and live basic/chaos paths were removed). **Basic** live stays in **`slideshow.sh`**. **Plain `--render`** is **`mpv_img_tricks.pipelines.plain_render`**.
 
-### 12.1 Exact Python routing (recap)
+### 12.1 CLI routing (recap)
 
-The table uses **`slideshow live`** for clarity; **`slideshow <path> …`** with **`live`** omitted is the same user flow (see **`DEFAULT_SUBCOMMAND`** in `cli.py`).
+| User flow | Backend | Notes |
+|-----------|---------|--------|
+| `slideshow live …` (no `--effect`, not `--render`) | `slideshow.sh` | Basic live |
+| `slideshow live … --effect tile` | `img-effects.sh` | Tile §12.6–§12.8 |
+| `slideshow live … --render` (no `--effect`) | Python `plain_render` | Flipbook |
+| `slideshow live … --render` + `--effect` | — | **Rejected** by CLI |
 
-| User flow | Backend script | Notes |
-|-----------|----------------|--------|
-| `slideshow live …` (no `--effect`, not `--render`) | `slideshow.sh` | “Basic” live; see §12.2 vs §12.3 |
-| `slideshow live … --effect chaos` | `img-effects.sh` | Live pipeline via `run_live_pipeline_effect` |
-| `slideshow live … --effect tile` | `img-effects.sh` | Tile funnel §12.6–§12.8 |
-| `slideshow live … --render` (no `--effect`) | `images-to-video.sh` | Flipbook |
-| `slideshow live … --render --effect <name>` | `img-effects.sh` | FFmpeg effects use `--limit`, resolution, fps |
-
-**Important:** `img-effects.sh` still defines `basic_effect` → `run_live_pipeline_effect basic`, but **`mpv_img_tricks.cli` never invokes that path** for **`slideshow live`** / default-**`live`** without `--effect`. The packaged entry always uses `slideshow.sh` for default basic live. The in-script `basic` case exists for anyone calling `img-effects.sh basic …` directly.
+**Direct `img-effects.sh`:** first positional must be **`tile`** (script exits otherwise).
 
 ### 12.2 `slideshow.sh` — what “basic live” actually does
 
 After parsing args and resolving `mpv-pipeline.sh`, the script:
 
-1. Builds `TMPLIST` via `discover_images_to_playlist` with **recursive** discovery (`"true"` passed at the call site).
+1. Builds `TMPLIST` via **`mpv_img_tricks_discover_sources_to_playlist`** in **`scripts/lib/discovery.sh`** (one or more sources, recursive discovery, **`--order`**).
 2. Calls `build_pipeline_common_args` with **fullscreen `yes`** and playlist **loop mode `playlist`** (not `none`).
 3. Adds `--shuffle` according to `--shuffle`.
 4. Optionally installs **watch mode** (`fswatch`) with an IPC socket for `mpv-pipeline.sh`.
@@ -216,44 +212,16 @@ After parsing args and resolving `mpv-pipeline.sh`, the script:
 
 So **basic live** is “full-screen looping playlist + optional shuffle + optional watch,” all through the shared **canonical runner** (`mpv-pipeline.sh`).
 
-### 12.3 Top-to-bottom order inside `img-effects.sh`
+### 12.3 Top-to-bottom order inside `img-effects.sh` (tile)
 
-Rough execution order **before** the final `case "$EFFECT"`:
-
-1. Parse argv (`EFFECT` is `$1`, then `shift`; remaining args are flags).
-2. Validate flags (scale mode only **`fit`/`fill`** for this script, instances, encoder, master control, `--order`, etc.).
-3. Register `trap cleanup EXIT INT TERM` (sound temp, lua scale script, playlists, tile skip log, background audio PID).
-4. Discover inputs into `TMPLIST` (directory vs glob, optional `--recursive`, image extensions); **`sort_discovered_images`** applies **`natural`** (`sort -V`) or **`om`** (oldest mtime first, portable `stat`).
+1. Parse argv (`EFFECT` must be **`tile`**, then `shift`; remaining args are flags).
+2. Validate flags (scale mode **`fit`/`fill`**, instances, encoder, master control, `--order`, etc.).
+3. Register `trap cleanup EXIT INT TERM` (sound temp, playlists, tile skip log, background audio PID).
+4. Discover inputs into `TMPLIST`; shared **`discovery.sh`** applies **`natural`**, **`om`**, or **`nm`**.
 5. Apply `--max-files` trim if set.
-6. **Then** the bottom **`case "$EFFECT"`** dispatcher runs (see §12.9).
+6. Run **`tile_effect`** (no multi-effect dispatcher).
 
-Render-style effects use **`get_limited_video_list`**, which copies the first **`LIMIT`** lines of `TMPLIST` to a side file and logs if that truncates the set (memory guard).
-
-### 12.4 Live modes inside `img-effects.sh`: `run_live_pipeline_effect`
-
-`basic_effect` and `chaos_effect` both delegate here; **`tile` does not**.
-
-| Mode   | Loop mode   | Fullscreen | Shuffle |
-|--------|-------------|------------|---------|
-| `basic` | `none`      | `no`       | `no` (+ `--mpv-arg --playlist-start=0`) |
-| `chaos` | `playlist` | `yes`      | `yes` |
-
-The function resolves **`mpv-pipeline.sh`**, builds shared pipeline argv (`build_pipeline_common_args`, audio, optional `--extra-script` for **`--random-scale`** lua), then **`exec`** the pipeline — the shell is replaced; no return to caller.
-
-Sound: if **`--sound`** is set, passes `--no-audio no` and mpv **`--audio-file=`**; else **`--no-audio yes`**. For **tile** with sound, behavior differs: see §12.6 (background `mpv` loop + main player **`--no-audio`**).
-
-### 12.5 FFmpeg “video effect” pattern (non-tile renders)
-
-Effects such as **ken-burns**, **crossfade**, **glitch**, **acid**, etc. follow the same skeleton:
-
-1. `input_list="$(get_limited_video_list "EffectName")"`.
-2. Bash loops read paths from `input_list`, building **`-filter_complex`** subgraphs and per-input **ffmpeg** `-loop 1 -t DURATION -i …` clauses.
-3. **`build_video_audio_args`** may prepend a looping audio input and map AAC when `--sound` is set (after **`prepare_sound_file`** trim).
-4. One **`eval "ffmpeg ${FFMPEG_MEM_ARGS} …"`** line writes **`OUTPUT`** (or a default filename). **`FFMPEG_MEM_ARGS`** caps filter/thread parallelism.
-
-After the dispatcher, if **`OUTPUT`** is set and the effect is not basic/chaos, the script prints a suggested **`mpv --fs`** command.
-
-### 12.6 `tile_effect` — entry and sound
+### 12.4 `tile_effect` — entry and sound
 
 Approximate **line region ~822** onward:
 
@@ -265,7 +233,7 @@ Approximate **line region ~822** onward:
 4. **`detect_screen_resolution`**: macOS **`system_profiler SPDisplaysDataType`**, Linux **`xrandr`**, else falls back to **`RESOLUTION`**.
 5. Branch: **`RANDOMIZE`** → **`tile_effect_randomized`**, else **`tile_effect_fixed`**.
 
-### 12.7 Fixed grid: lavfi fast path vs ffmpeg composites
+### 12.5 Fixed grid: lavfi fast path vs ffmpeg composites
 
 **`tile_effect_fixed`** (~1139+):
 
@@ -282,7 +250,7 @@ Approximate **line region ~822** onward:
 
 Comment in-script: spacing forces the composite path because the lavfi layout does not implement gaps cleanly.
 
-### 12.8 Randomized tile: layouts, cache, memory sampling
+### 12.6 Randomized tile: layouts, cache, memory sampling
 
 **`tile_effect_randomized`** (~1459+):
 
@@ -293,37 +261,9 @@ Comment in-script: spacing forces the composite path because the lavfi layout do
 
 **Cleanup:** `trap` + end of randomized path remove temps; cached dirs are kept when **`cache_used`**.
 
-### 12.9 Bottom dispatcher (effect switch)
+### 12.7 Cross-file relationships
 
-The **`case "$EFFECT"`** at **~1879–1919** is the single exit switch: **`basic`**, **`chaos`**, **`ken-burns`**, **`crossfade`**, **`glitch`**, **`acid`**, **`reality`**, **`kaleido`**, **`matrix`**, **`liquid`**, **`tile`**, default error.
-
-Immediately after: remove **`TMPLIST`**; optional **“Play with mpv”** hint for rendered outputs.
-
-### 12.10 Cross-file relationships
-
-- **`scripts/lib/pipeline.sh`** (sourced): **`build_pipeline_common_args`**, shared between **`slideshow.sh`** and **`img-effects.sh`** live paths.
-- **`scripts/lib/mpv_slideshow_bindings.sh`**: whether to add **`--script=…/slideshow-bindings.lua`** (CLI **`--use-slideshow-bindings`** plus env **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`**); used by **`mpv-pipeline.sh`** and **`img-effects.sh`** **`run_mpv`**.
-- **`scripts/mpv-pipeline.sh`**: actual mpv launcher / multi-instance wiring consumed by **`run_live_pipeline_effect`** and **`slideshow.sh`**.
+- **`scripts/lib/pipeline.sh`** (sourced): **`build_pipeline_common_args`**, shared with **`slideshow.sh`** (not used for tile live `run_mpv` the same way, but helpers overlap conceptually).
+- **`scripts/lib/mpv_slideshow_bindings.sh`**: whether to add **`--script=…/slideshow-bindings.lua`**; used by **`mpv-pipeline.sh`** and **`img-effects.sh`** **`run_mpv`**.
+- **`scripts/mpv-pipeline.sh`**: mpv launcher consumed by **`slideshow.sh`**.
 - **`scripts/lib/validate.sh`**: shared validation helpers.
-
-### 12.11 Diagram — inside `img-effects.sh` after discovery
-
-```mermaid
-flowchart TD
-  A["Parse args + validate"]
-  B["TMPLIST discovery + sort"]
-  C{"case EFFECT"}
-  L1["run_live_pipeline_effect"]
-  L2["FFmpeg effect fn"]
-  T["tile_effect"]
-  TF["tile_effect_fixed"]
-  TR["tile_effect_randomized"]
-  A --> B --> C
-  C -->|"basic, chaos"| L1
-  C -->|"ken-burns, glitch, …"| L2
-  C -->|"tile"| T
-  T --> TF
-  T --> TR
-```
-
-This complements §11: §11 is package-level routing; §12 is **inside** the largest backend script.

@@ -29,7 +29,17 @@ MEDIA_DIR="${WORK_DIR}/media"
 BACKEND_DIR="${WORK_DIR}/backends"
 LOG_FILE="${WORK_DIR}/backend.log"
 mkdir -p "$MEDIA_DIR" "$BACKEND_DIR"
-touch "${MEDIA_DIR}/a.jpg" "${MEDIA_DIR}/b.jpg"
+# Minimal valid 1x1 PNGs so plain --render (real ffmpeg) succeeds when exercised.
+python3 - <<PY
+import base64
+from pathlib import Path
+png = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+d = Path("${MEDIA_DIR}")
+(d / "a.png").write_bytes(png)
+(d / "b.png").write_bytes(png)
+PY
 
 cat > "${BACKEND_DIR}/slideshow.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -68,19 +78,19 @@ assert_contains "${WORK_DIR}/dry.txt" "${MEDIA_DIR}"
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1 --order natural"
 
 : > "$LOG_FILE"
 slideshow "$MEDIA_DIR" --duration 0.01 --scale-mode fill >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1 --order natural"
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --duration 0.01 --fill >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1"
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fill --instances 1 --order natural"
 
 : > "$LOG_FILE"
 slideshow live "$MEDIA_DIR" --duration 0.01 --fit >/dev/null
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1 --order natural"
 
 if slideshow live "$MEDIA_DIR" --fit --fill >/dev/null 2>"${WORK_DIR}/mx.err"; then
   fail "expected --fit and --fill together to fail"
@@ -88,12 +98,8 @@ fi
 rg -q "mutually exclusive|not allowed" "${WORK_DIR}/mx.err" || rg -q "argument" "${WORK_DIR}/mx.err" || fail "expected argparse error for --fit --fill"
 
 : > "$LOG_FILE"
-slideshow live "$MEDIA_DIR" --effect chaos --duration 0.01 >/dev/null
-assert_contains "$LOG_FILE" "img-effects.sh chaos ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
-
-: > "$LOG_FILE"
 slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --randomize --duration 0.01 >/dev/null
-assert_contains "$LOG_FILE" "img-effects.sh tile ${MEDIA_DIR}/*.mov --duration 0.01 --scale-mode fit --instances 1 --grid 2x2 --randomize"
+assert_contains "$LOG_FILE" "img-effects.sh tile ${MEDIA_DIR}/*.mov --duration 0.01 --scale-mode fit --instances 1 --grid 2x2 --randomize --order natural"
 
 : > "${WORK_DIR}/dry-clear.txt"
 slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --clear-cache --dry-run >"${WORK_DIR}/dry-clear.txt"
@@ -105,22 +111,38 @@ if ! slideshow live "$MEDIA_DIR" --clear-cache --duration 0.01 >/dev/null 2>"${W
   fail "expected --clear-cache with basic live to succeed"
 fi
 assert_contains "${WORK_DIR}/clear-basic.err" "phase=cache"
-assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1"
+assert_contains "$LOG_FILE" "slideshow.sh ${MEDIA_DIR} --duration 0.01 --scale-mode fit --instances 1 --order natural"
 
 : > "$LOG_FILE"
 if ! slideshow live "$MEDIA_DIR" --render --output out.mp4 --clear-cache >/dev/null 2>"${WORK_DIR}/clear-render.err"; then
   fail "expected --clear-cache with plain --render to succeed"
 fi
 assert_contains "${WORK_DIR}/clear-render.err" "phase=cache"
-assert_contains "$LOG_FILE" "images-to-video.sh ${MEDIA_DIR} 60 1920x1080 out.mp4"
 
-: > "$LOG_FILE"
-slideshow live "$MEDIA_DIR" --render --effect glitch --output glitch.mp4 --duration 0.3 >/dev/null
-assert_contains "$LOG_FILE" "img-effects.sh glitch ${MEDIA_DIR} --duration 0.3 --resolution 1920x1080 --fps 30 --output glitch.mp4 --scale-mode fit --limit 5"
+slideshow live "$MEDIA_DIR" --render --output out.mp4 --dry-run >"${WORK_DIR}/dry-render.txt"
+assert_contains "${WORK_DIR}/dry-render.txt" "ffmpeg"
+assert_contains "${WORK_DIR}/dry-render.txt" "plain-render"
 
-if slideshow live "$MEDIA_DIR" --effect glitch >/dev/null 2>"${WORK_DIR}/err.log"; then
-  fail "expected glitch without --render to fail"
+if slideshow live "$MEDIA_DIR" --render --effect tile >/dev/null 2>"${WORK_DIR}/er1.log"; then
+  fail "expected --effect with --render to fail"
 fi
-assert_contains "${WORK_DIR}/err.log" "requires --render"
+assert_contains "${WORK_DIR}/er1.log" "cannot be combined with --render"
 
-echo "PASS: unified slideshow CLI routes live/effect/render modes"
+if slideshow live "$MEDIA_DIR" --effect chaos >/dev/null 2>"${WORK_DIR}/er2.log"; then
+  fail "expected chaos effect to be invalid"
+fi
+assert_contains "${WORK_DIR}/er2.log" "invalid choice"
+
+mkdir -p "${MEDIA_DIR}/sub"
+slideshow live "$MEDIA_DIR" "${MEDIA_DIR}/sub" --dry-run --duration 0.01 >"${WORK_DIR}/dry-multi.txt"
+assert_contains "${WORK_DIR}/dry-multi.txt" "slideshow.sh"
+assert_contains "${WORK_DIR}/dry-multi.txt" "${MEDIA_DIR}"
+assert_contains "${WORK_DIR}/dry-multi.txt" "${MEDIA_DIR}/sub"
+assert_contains "${WORK_DIR}/dry-multi.txt" "--order natural"
+
+if slideshow live "$MEDIA_DIR" "${MEDIA_DIR}/sub" --watch >/dev/null 2>"${WORK_DIR}/watch.err"; then
+  fail "expected --watch with multiple sources to fail"
+fi
+assert_contains "${WORK_DIR}/watch.err" "requires exactly one source path"
+
+echo "PASS: unified slideshow CLI routes live/tile/plain-render modes"

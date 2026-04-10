@@ -24,7 +24,7 @@ make ci
 
 That runs **`./tests/run-unit.sh`** (needs **`uv`** and **`rg`**) plus **shellcheck** on the scoped Bash scripts. Use **`make test`** for unit tests only. Details: [.github/workflows/ci.yml](.github/workflows/ci.yml), [docs/setup.md](docs/setup.md#routine-checks).
 
-**Real ffmpeg checks** (optional, after changing tile/ken-burns or effects): [tests/manual/README.md](tests/manual/README.md) — run **`./tests/manual/generate-fixtures.sh`** once, then **`make manual-smoke`** (needs **ffmpeg** / **ffprobe** on `PATH`; writes under **`tmp/effect-smoke/`**).
+**Real ffmpeg checks** (optional, after changing tile or plain render): [tests/manual/README.md](tests/manual/README.md) — run **`./tests/manual/generate-fixtures.sh`** once, then **`make manual-smoke`** (needs **ffmpeg** / **ffprobe** on `PATH`; writes under **`tmp/effect-smoke/`**).
 
 ## Requirements (summary)
 
@@ -68,7 +68,7 @@ Examples:
 ```bash
 ./slideshow ~/pics                      # same as: ./slideshow live ~/pics
 ./slideshow live ~/pics
-./slideshow live ~/pics --effect chaos --duration 0.02
+./slideshow live ~/pics --effect tile --grid 2x2 --randomize
 ./slideshow live ~/pics --render --output out.mp4
 ```
 
@@ -80,48 +80,29 @@ Examples:
 # Basic slideshow
 ./slideshow live ~/pics
 
-# Chaos mode (shuffled, infinite loop)
-./slideshow live ~/pics --effect chaos --duration 0.02
+# Tiled grid (see --grid, --randomize)
+./slideshow live ~/pics --effect tile --grid 2x2
 
 # Slideshow with scaling options
 ./slideshow live ~/pics --scale-mode fill
 ```
 
-### Video Effects
+### Plain render (flipbook video)
 
 ```bash
-# Ken Burns effect
-./slideshow live ~/pics --render --effect ken-burns --duration 3 --output slideshow.mp4
-
-# Visual effects (glitch, acid, reality, etc.)
-./slideshow live ~/pics --render --effect glitch --output glitch.mp4
-./slideshow live ~/pics --render --effect acid --output acid-trip.mp4
-./slideshow live ~/pics --render --effect reality --output reality-break.mp4
-
-# Simple video from images
+# Video from images (no --effect; implemented in Python + ffmpeg)
 ./slideshow live ~/pics --render --img-per-sec 60 --resolution 1920x1080 --output out.mp4
 ```
 
-## Available Effects
+## Available modes
 
-### Live Slideshows (mpv)
-- **basic** - Sequential slideshow playback
-- **chaos** - Shuffled slideshow playback with loop enabled
-- **tile** - Live tiled grid slideshow
-
-### Video Effects (ffmpeg)
-- **ken-burns** - Smooth zoom/pan transitions
-- **crossfade** - Smooth blending between images
-- **glitch** - Data corruption and noise effects
-- **acid** - Color shift effect
-- **reality** - Distortion and transformation effects
-- **kaleido** - Kaleidoscope patterns
-- **matrix** - Matrix effect
-- **liquid** - Liquid distortion effect
+- **basic** (default) — sequential live slideshow via `scripts/slideshow.sh`
+- **tile** — live tiled grid via `scripts/img-effects.sh` (only effect backend)
+- **`--render`** — flipbook export via **`mpv_img_tricks`** (`plain_render`); **`--effect` is not allowed** with **`--render`**
 
 ## Implementation note
 
-Orchestration lives in Bash under [`scripts/`](scripts/) and is driven only by the Python package **`mpv_img_tricks`** (console script **`slideshow`** or **`python -m mpv_img_tricks`**). Do not rely on calling `scripts/*.sh` directly; they are backends.
+The CLI is **`mpv_img_tricks`**; plain **`--render`** runs in Python. **`slideshow.sh`** and **`img-effects.sh`** (tile only) remain Bash backends for mpv orchestration.
 
 Live key bindings come from [`mpv-scripts/slideshow-bindings.lua`](mpv-scripts/slideshow-bindings.lua). Set **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`** (non-empty) to skip loading them on all slideshow mpv launches—[full env table](docs/setup.md#environment-variables). **Syncing / diffing with `~/.config/mpv`:** [docs/setup.md](docs/setup.md#mpv-keyboard-shortcuts).
 
@@ -166,10 +147,13 @@ When using mpv with `--script=mpv-scripts/slideshow-bindings.lua`, you can contr
 
 ### slideshow live
 
-The subcommand name **`live`** is optional as long as you are not adding other subcommands later: **`./slideshow <images_dir_or_glob> [options]`** is equivalent. Explicit **`live`** stays the clearest form in docs and scripts.
+The subcommand name **`live`** is optional as long as you are not adding other subcommands later: **`./slideshow <SOURCE> [<SOURCE> …] [options]`** is equivalent. Explicit **`live`** stays the clearest form in docs and scripts.
 
 ```bash
-./slideshow live <images_dir_or_glob> [options]
+./slideshow live <SOURCE> [<SOURCE> …] [options]
+
+Positional:
+  SOURCE                     One or more directories, image files, or glob patterns
 
 Playback/display:
   --duration, -d SECONDS     Duration per image
@@ -181,18 +165,17 @@ Playback/display:
   --no-master-control        Disable master->follower sync
   --watch                    Watch for new images and add them to playlist
   --no-recursive             Disable recursive watch mode
-  --shuffle                  Shuffle playlist order
+  --shuffle                  Shuffle playlist order (overrides --order)
+  --order MODE               natural | om | nm (deterministic order; default natural)
 
 Render/video:
-  --render                   Render a video instead of launching live playback
+  --render                   Render a flipbook video instead of launching live playback (Python + ffmpeg)
   --output FILE              Output path for render mode
   --resolution SIZE          Output resolution (default: 1920x1080)
-  --fps FPS                  Frames per second for effect renders
   --img-per-sec COUNT        Images per second for plain render mode
 
 Effect-specific:
-  --effect NAME              basic|chaos|tile|ken-burns|crossfade|glitch|acid|reality|kaleido|matrix|liquid
-  --limit, -l COUNT          Max images for video effects
+  --effect NAME              basic|tile (live only; not with --render)
   --grid SIZE                Tile grid size
   --spacing PIXELS           Tile spacing in pixels
   --group-size COUNT         Number of images per randomized tile group
@@ -202,7 +185,6 @@ Effect-specific:
   --sound FILE               Play sound file during slideshow playback
   --sound-trim-db DB         Leading silence trim threshold in dB
   --max-files COUNT          Limit discovered files
-  --order MODE               natural|om
   --recursive                Recurse into subdirectories
   --random-scale             Randomly alternate between fill and fit scaling
 
@@ -220,14 +202,8 @@ Current limitation: `--watch` currently supports only a single instance (`--inst
 ## More Examples
 
 ```bash
-# Custom resolution and duration
-./slideshow live ~/pics --render --effect glitch --duration 0.3 --resolution 1280x720 --output glitch.mp4
-
-# High frame rate
-./slideshow live ~/pics --render --effect reality --fps 60 --output physics-break.mp4
-
-# Process more images
-./slideshow live ~/pics --render --effect acid --limit 20 --output trip.mp4
+# Plain render at custom resolution
+./slideshow live ~/pics --render --resolution 1280x720 --output flip.mp4
 
 # Short duration slideshow
 ./slideshow live ~/pics --duration 0.2

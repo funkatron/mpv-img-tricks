@@ -1,14 +1,14 @@
 [project]
 name = "mpv-img-tricks"
 version = "0.1.0"
-description = "Live slideshows and ffmpeg effects over image folders (Python CLI over Bash backends)."
+description = "Live slideshows and tiled image grids (Python CLI; Bash backends for mpv tile path)."
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = []
+dev = ["pytest>=8.0"]
 
 [project.scripts]
 slideshow = "mpv_img_tricks.cli:main"
@@ -19,3 +19,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["mpv_img_tricks"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

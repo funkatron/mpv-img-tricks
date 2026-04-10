@@ -3,6 +3,7 @@
 
 test:
 	./tests/run-unit.sh
+	uv run pytest -q tests/
 
 shellcheck:
 	command -v shellcheck >/dev/null 2>&1 || { echo "Install shellcheck (e.g. brew install shellcheck)" >&2; exit 1; }

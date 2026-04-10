@@ -17,8 +17,8 @@ jobs:
         with:
           version: "latest"
 
-      - name: Install ripgrep (tests use rg)
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Install ripgrep and ffmpeg (tests use rg; plain-render test runs ffmpeg)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep ffmpeg
 
       - name: Unit tests
         run: make test

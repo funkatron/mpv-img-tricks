@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Real ffmpeg encodes for ken-burns (and a single crossfade) using fixtures or generated solid PNGs.
+# Real ffmpeg encode: plain flipbook via Python CLI (fixtures or generated solid PNGs).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMG_DIR="${ROOT_DIR}/fixtures/images"
 OUT_DIR="${ROOT_DIR}/tmp/effect-smoke"
-SCRIPT="${ROOT_DIR}/scripts/img-effects.sh"
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "ffmpeg not found" >&2
@@ -30,16 +29,11 @@ probe() {
   ffprobe -v error -select_streams v:0 -show_entries stream=duration,nb_frames -show_entries format=size -of default=nw=1:nk=1 "$f" || true
 }
 
-echo "Ken burns -> ${OUT_DIR}/ken-burns-smoke.mp4"
-bash "$SCRIPT" ken-burns "$IMG_DIR" \
-  --limit 3 --duration 0.5 --fps 24 --resolution 640x360 \
-  --output "${OUT_DIR}/ken-burns-smoke.mp4"
-probe "${OUT_DIR}/ken-burns-smoke.mp4"
+echo "Plain render -> ${OUT_DIR}/flipbook-smoke.mp4"
+(cd "$ROOT_DIR" && uv run slideshow live "$IMG_DIR" --render \
+  --output "${OUT_DIR}/flipbook-smoke.mp4" \
+  --resolution 640x360 \
+  --img-per-sec 30)
+probe "${OUT_DIR}/flipbook-smoke.mp4"
 
-echo "Crossfade -> ${OUT_DIR}/crossfade-smoke.mp4"
-bash "$SCRIPT" crossfade "$IMG_DIR" \
-  --limit 3 --duration 0.4 --fps 24 --resolution 640x360 \
-  --output "${OUT_DIR}/crossfade-smoke.mp4"
-probe "${OUT_DIR}/crossfade-smoke.mp4"
-
-echo "OK: manual render smokes finished (outputs in ${OUT_DIR})"
+echo "OK: manual render smoke finished (outputs in ${OUT_DIR})"

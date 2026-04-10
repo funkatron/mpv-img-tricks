@@ -31,4 +31,4 @@ Use your own image directory for serious checks.
 ## Routine
 
 - Daily: `make test` (or `make ci` with shellcheck installed).
-- After changing **tile** or **ken-burns**: `make test` plus `./tests/manual/smoke-renders.sh`.
+- After changing **tile** or **plain render**: `make test` plus `./tests/manual/smoke-renders.sh`.
