@@ -239,7 +239,7 @@ Approximate **line region ~822** onward:
 **Heavy path** when **`INPUT_COUNT > TILE_COUNT`** OR **`SPACING > 0`**:
 
 - Renders each slide to a temp directory with **`nice -n 10 ffmpeg`** — either **one frame** (`-frames:v 1` → `.jpg`) or **animated** segment (`-t "$DURATION"` → `.mp4`) depending on **`ANIMATE_VIDEOS`**.
-- Plays the ordered composites with **`run_mpv`**, then **`rm -rf` the composite dir**.
+- Plays the ordered composites with shared **`play_composite_dir`**; when cache is enabled it stores/reuses composites under **`~/.cache/mpv-img-tricks/tile-fixed/`** keyed by source manifest + grid/screen/render settings.
 
 **Light path** (single “page” that fits the grid **and** **no spacing**):
 
@@ -252,7 +252,7 @@ Comment in-script: spacing forces the composite path because the lavfi layout do
 **`tile_effect_randomized`** (~1459+):
 
 1. Builds a pool of **`cols x rows : tile_count`** layouts constrained by **`GROUP_SIZE`**.
-2. Defines nested **`play_composite_dir`**: collects **`*.jpg`** or **`*.mp4`**, sorts, invokes **`run_mpv`** with **`--shuffle`** and **`--loop-playlist=inf`** (still images use **`--image-display-duration`**; video composites omit it).
+2. Uses shared **`play_composite_dir`**: collects **`*.jpg`** or **`*.mp4`**, sorts, invokes **`run_mpv`** with **`--shuffle`** and **`--loop-playlist=inf`** (still images use **`--image-display-duration`**; video composites omit it).
 3. **Cache** (when **`CACHE_COMPOSITES`** true): directory **`~/.cache/mpv-img-tricks/tile-randomized/`**, keyed by **`shasum`** (or **`cksum`**) over metadata including **`CACHE_VERSION`**, **`source_manifest`** (**SHA-256** of the ordered per-file **`ffprobe-tile-v5`**-style identity lines — no directory path), screen, group size, animate flag, encoder, duration, fps, scale, spacing. On hit, replays cached composites without rebuilding.
 4. Compositing loop: parallel jobs ( **`JOBS`** or half CPU count), **`render_randomized_slide`**, tracks **`ACTIVE_PIDS`**, optional **RSS** sampling and **>512MB** warning for the script process.
 

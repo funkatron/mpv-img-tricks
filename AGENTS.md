@@ -4,16 +4,16 @@ Concise orientation for coding assistants. End-user install and flags: [docs/set
 
 ## What this repo is
 
-- **Pre-alpha** utility: live image slideshows (**mpv**), optional **ffmpeg** flipbook render, **tile** mode via Bash.
-- **Python** (`mpv_img_tricks/`): CLI, validation, **`plain_render`**, **basic live** (discovery + optional watch + **`mpv_pipeline`** subprocess **mpv**), **tile** still shells out to **`img-effects.sh`**.
-- **Bash** (`scripts/`): **`slideshow.sh`** (thin shim → `uv run slideshow live`), **`img-effects.sh`** (tile only), **`mpv-pipeline.sh`** (reference / tests), **`images-to-video.sh`** (legacy / optional direct use).
+- **Pre-alpha** utility: live image slideshows (**mpv**) and optional **ffmpeg** flipbook render.
+- **Python** (`mpv_img_tricks/`): CLI, validation, **`plain_render`**, **basic live** (discovery + optional watch + **`mpv_pipeline`** subprocess **mpv**), and **tile live** (`pipelines/tile_live.py`).
+- **Bash** (`scripts/`): **`slideshow.sh`** (thin shim → `uv run slideshow live`), **`mpv-pipeline.sh`** (reference / tests), **`images-to-video.sh`** (legacy / optional direct use).
 
 ## Entrypoints
 
 - Users run **`slideshow`** (e.g. `./slideshow` after `uv sync`, or `uv run slideshow`). Do not document **`scripts/*.sh`** as primary entrypoints.
 - Routing summary:
   - **`live`** + **`basic`** → Python **`mpv_img_tricks.pipelines.basic_slideshow`** (+ **`mpv_pipeline`**)
-  - **`live`** + **`tile`** → `scripts/img-effects.sh` (via **`pipelines.tile_live`**)
+ - **`live`** + **`tile`** → `mpv_img_tricks/pipelines/tile_live.py`
   - **`--render`** (no **`--effect`**) → Python **`plain_render`** (not `images-to-video.sh` from the CLI)
   - **`--effect`** with **`--render`** is rejected
 
@@ -27,7 +27,7 @@ Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks
 | `mpv_img_tricks/pipelines/plain_render.py` | Plain flipbook render |
 | `mpv_img_tricks/pipelines/live.py` | Dispatch: basic vs tile |
 | `mpv_img_tricks/pipelines/basic_slideshow.py` | Basic live: discovery, watch, mpv |
-| `mpv_img_tricks/pipelines/tile_live.py` | Tile: argv + subprocess **img-effects.sh** |
+| `mpv_img_tricks/pipelines/tile_live.py` | Tile: Python discovery/validate/composite/cache + mpv launch |
 | `mpv_img_tricks/mpv_pipeline.py` | **mpv** argv / multi-instance / master bridge (was **mpv-pipeline.sh**) |
 | `mpv_img_tricks/paths.py` | Resolve repo root / `scripts/` (`MPV_IMG_TRICKS_ROOT`, `MPV_IMG_TRICKS_SCRIPTS_DIR`) |
 | `scripts/mpv-pipeline.sh` | Shared mpv launch (scaling, instances, flags) |
@@ -37,7 +37,7 @@ Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks
 ## Slideshow mpv bindings (one policy)
 
 - Script on disk: **`mpv-scripts/slideshow-bindings.lua`**.
-- **`scripts/lib/mpv_slideshow_bindings.sh`** defines whether to add `--script=…`: CLI **`--use-slideshow-bindings`** (`mpv-pipeline.sh`) and **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`** (non-empty disables everywhere, overrides CLI). **`img-effects.sh`** `run_mpv` uses the same helpers—keep them in sync if you change rules.
+- Slideshow bindings policy is centralized via Python `mpv_img_tricks.slideshow_bindings` and the env kill-switch **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS`** (non-empty disables everywhere).
 
 ## Tests and CI
 
@@ -54,7 +54,7 @@ Harness: `tests/run-unit.sh` (needs **`uv`**, **`rg`**). Assertions: **`tests/un
 - Prefer small, behavior-focused diffs; avoid drive-by refactors unrelated to the task.
 - After shell changes in CI scope, run **`make ci`** before commit when practical.
 - Breaking CLI/env changes are acceptable for this project; update [docs/setup.md](docs/setup.md) and any tests that assert argv strings.
-- **`--clear-cache`** (live): clears **`ffprobe-tile-v1`**, **`ffprobe-tile-v2`**, **`ffprobe-tile-v3`**, **`ffprobe-tile-v4`**, **`ffprobe-tile-v5`**, and **`tile-randomized`** under **`~/.cache/mpv-img-tricks/`** — from Python for basic live and plain **`--render`**, forwarded as **`--clear-cache`** to **`img-effects.sh`** for tile only.
+- **`--clear-cache`** (live): clears **`ffprobe-tile-v1`**, **`ffprobe-tile-v2`**, **`ffprobe-tile-v3`**, **`ffprobe-tile-v4`**, **`ffprobe-tile-v5`**, **`tile-randomized`**, and **`tile-fixed`** under **`~/.cache/mpv-img-tricks/`** (handled in Python).
 
 ## Docs you might edit
 
