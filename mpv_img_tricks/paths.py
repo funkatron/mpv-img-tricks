@@ -44,7 +44,7 @@ def get_repo_root() -> Path:
 
 
 def get_scripts_dir() -> Path:
-    """Directory containing ``slideshow.sh``, ``img-effects.sh``, ``images-to-video.sh``."""
+    """Directory containing legacy helper scripts (e.g. ``slideshow.sh`` / ``images-to-video.sh``)."""
     override = os.environ.get("MPV_IMG_TRICKS_SCRIPTS_DIR")
     if override:
         return Path(override).expanduser().resolve()

@@ -1,7 +1,7 @@
 """Unified CLI for mpv-img-tricks.
 
-Argument parsing lives here; ``live`` + **basic** uses Python (mpv); **tile** still
-delegates to ``scripts/img-effects.sh``; plain ``--render`` uses Python + ffmpeg.
+Argument parsing lives here; ``live`` (basic/tile) uses Python pipelines (mpv/ffmpeg),
+and plain ``--render`` uses Python + ffmpeg.
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--debug", action="store_true", help="Print backend debug info (shell trace in img-effects)")
+    parser.add_argument("--debug", action="store_true", help="Print backend debug info")
     parser.add_argument(
         "--quiet",
         action="store_true",
@@ -159,11 +159,12 @@ _TOOL_CACHE_SUBDIRS = (
     "ffprobe-tile-v4",
     "ffprobe-tile-v5",
     "tile-randomized",
+    "tile-fixed",
 )
 
 
 def clear_mpv_img_tricks_tool_caches(*, quiet: bool) -> None:
-    """Remove img-effects cache dirs under ~/.cache/mpv-img-tricks (same set as img-effects.sh)."""
+    """Remove mpv-img-tricks cache dirs under ~/.cache/mpv-img-tricks."""
     base = Path.home() / ".cache" / "mpv-img-tricks"
     removed = False
     failures: list[tuple[Path, OSError]] = []
@@ -182,18 +183,11 @@ def clear_mpv_img_tricks_tool_caches(*, quiet: bool) -> None:
         print(f"mpv-img-tricks: phase=cache msg=warn could_not_remove path={path} err={exc}", file=sys.stderr)
     if removed:
         print(
-            "mpv-img-tricks: phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 ffprobe-tile-v5 tile-randomized",
+            "mpv-img-tricks: phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 ffprobe-tile-v5 tile-randomized tile-fixed",
             file=sys.stderr,
         )
     elif not failures:
         print(f"mpv-img-tricks: phase=cache msg=cleared noop dir={base}", file=sys.stderr)
-
-
-def _clear_cache_handled_by_img_effects(args: Namespace) -> bool:
-    effect = args.effect or "basic"
-    if args.render:
-        return False
-    return effect == "tile"
 
 
 def build_plain_render_dry_run_line(args: Namespace) -> str:
@@ -241,8 +235,7 @@ def handle_live(args: Namespace, parser: argparse.ArgumentParser) -> int:
     validate_live_args(args, parser)
 
     if getattr(args, "clear_cache", False) and not args.dry_run:
-        if not _clear_cache_handled_by_img_effects(args):
-            clear_mpv_img_tricks_tool_caches(quiet=args.quiet)
+        clear_mpv_img_tricks_tool_caches(quiet=args.quiet)
 
     if args.dry_run:
         if args.render:

@@ -1,4 +1,4 @@
-"""Live slideshow dispatch: basic in Python, tile → ``scripts/img-effects.sh`` (via :mod:`tile_live`)."""
+"""Live slideshow dispatch: basic and tile in Python pipelines."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from mpv_img_tricks.pipelines.tile_live import build_tile_backend_command, run_t
 
 
 def build_live_backend_command(args: Namespace) -> list[str]:
-    """Backend argv for **dry-run** tile or subprocess tile dispatch. Basic live uses mpv in-process."""
+    """Backend argv preview for **dry-run** output."""
     effect = args.effect or "basic"
     if effect == "basic":
         cmds = build_basic_live_preview_commands(args)
