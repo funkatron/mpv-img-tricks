@@ -420,9 +420,18 @@ def _build_filter(*, cols: int, rows: int, screen_w: int, screen_h: int, spacing
     return ";".join(parts), tile_count
 
 
+def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
+    """xstack+pad often yields yuv444p; MJPEG (.jpg) needs a JPEG-friendly pix fmt or encode fails."""
+    if not filter_complex.endswith("[out]"):
+        return filter_complex
+    stem = filter_complex[: -len("[out]")]
+    return f"{stem}[pjfmt];[pjfmt]format=yuvj420p[out]"
+
+
 def _ffmpeg_codec_args(args: Namespace) -> list[str]:
     if not args.animate_videos:
-        return ["-frames:v", "1", "-q:v", "2"]
+        # Explicit pix fmt matches filter; avoids mjpeg 'non full-range YUV' / encoder init failures.
+        return ["-frames:v", "1", "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-q:v", "2"]
     if args.encoder == "hevc_videotoolbox":
         return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "15M", "-pix_fmt", "yuv420p"]
     if args.encoder == "libx265":
@@ -431,7 +440,18 @@ def _ffmpeg_codec_args(args: Namespace) -> list[str]:
 
 
 def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: Namespace) -> bool:
-    cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-threads", "1"]
+    if not args.animate_videos:
+        filter_complex = _filter_for_still_jpeg_encode(filter_complex)
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-threads",
+        "1",
+        "-filter_complex_threads",
+        "1",
+    ]
     for item in inputs:
         if args.animate_videos and not _is_video(item):
             cmd.extend(["-loop", "1", "-t", str(args.duration), "-i", item])
