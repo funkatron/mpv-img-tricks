@@ -81,7 +81,7 @@ A published wheel contains only the Python package. **Running the full tool stil
 | Variable | Purpose |
 |----------|---------|
 | `MPV_IMG_TRICKS_ROOT` | Absolute path to the **repository root** (directory that contains `scripts/slideshow.sh`). Use if auto-discovery fails (unusual cwd, tooling that changes the working directory). |
-| `MPV_IMG_TRICKS_SCRIPTS_DIR` | Absolute path to the directory that contains `slideshow.sh`, `img-effects.sh`, and `images-to-video.sh`. Overrides normal `scripts/` resolution (used by unit tests with mock backends). |
+| `MPV_IMG_TRICKS_SCRIPTS_DIR` | Absolute path to the legacy `scripts/` helper directory (for compatibility/tests that still touch shell helpers). |
 | `MPV_IMG_TRICKS_DEFAULT_IMAGE_DIR` | When set, `scripts/slideshow.sh` uses this directory if no image path is passed on the command line (personal automation only). |
 | `MPV_IMG_TRICKS_CONFIG` | Optional path to a **JSON** file with default CLI values (see below). If unset and `~/.config/mpv-img-tricks/config.json` exists, that file is loaded. |
 | `MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS` | If non-empty, **all** slideshow mpv launches skip auto-loading **`mpv-scripts/slideshow-bindings.lua`** (overrides `--use-slideshow-bindings yes` on **`mpv-pipeline.sh`**). |
@@ -112,7 +112,7 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 
 ### Defaults
 
-**`DEFAULT_SLIDESHOW_DURATION_SECONDS`** in [`scripts/lib/constants.sh`](../scripts/lib/constants.sh) (currently **2.0** s) applies everywhere **`img-effects.sh`** or **`slideshow.sh`** runs, including if someone invokes the Bash backend directly (not supported as an end-user API). Override with **`--duration`** or JSON **`duration`** as usual.
+**`DEFAULT_SLIDESHOW_DURATION_SECONDS`** in [`scripts/lib/constants.sh`](../scripts/lib/constants.sh) (currently **2.0** s) mirrors the packaged CLI default (defined in `mpv_img_tricks/cli.py`). Override with **`--duration`** or JSON **`duration`** as usual.
 
 ### Live playback
 
@@ -132,7 +132,7 @@ Live slideshows run **mpv** with the repo script **[`mpv-scripts/slideshow-bindi
 | Code path | How bindings load |
 |-----------|-------------------|
 | **basic** | Via **`mpv-pipeline.sh`** (default **`--use-slideshow-bindings yes`**). |
-| **tile** | **`img-effects.sh`** **`run_mpv`** (same **`scripts/lib/mpv_slideshow_bindings.sh`** policy as the pipeline). |
+| **tile** | Python tile pipeline (`mpv_img_tricks/pipelines/tile_live.py`) launches mpv directly with the same bindings policy. |
 | **Disable bindings** | Set **`MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS=1`** (non-empty disables everywhere; overrides **`--use-slideshow-bindings yes`**). |
 
 **Comparing machines:** bindings you like usually come from **this repo**, not from a global mpv profile—unless the other host also loads **`~/.config/mpv/input.conf`** or **`~/.config/mpv/scripts/*.lua`** and overrides the same keys.
@@ -166,7 +166,7 @@ For `--effect tile` (and similar compositing paths), work is not silent: phases 
 1. **validate-media** — Optional `ffprobe` pass over the playlist (progress lines every 25 files for large sets).
 2. **probe-encoders** — With `--animate-videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
 3. **prepare-audio** — Optional silence trim via ffmpeg when `--sound` is set.
-4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted every few slides.
+4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and (for telemetry) `ram_cap_candidate` / `installed_ram_bytes` — the RAM candidate is **not** applied to limits yet. Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
 
 If screen size detection fails (no usable `system_profiler` / `xrandr`), tile layout falls back to `--resolution`.
 
@@ -184,7 +184,7 @@ From the repository root (after `uv sync`):
 
 ## CI and restricted environments
 
-GitHub Actions and normal Linux/macOS runners are fine for `./tests/run-unit.sh`. Some **sandboxed** or highly locked-down environments block `nice(2)` or bash process substitution used inside `img-effects.sh`; if compositing tests fail with “Operation not permitted”, run the same command on a full VM or your laptop shell.
+GitHub Actions and normal Linux/macOS runners are fine for `./tests/run-unit.sh`. For real compositing runs, heavily sandboxed environments can still restrict ffmpeg/mpv process behavior; if compositing tests fail with “Operation not permitted”, run the same command on a full VM or your laptop shell.
 
 ## Versioning
 
@@ -206,7 +206,7 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
 
 **Tile validate-media skipped every file (`kept=0`)**
 
-- From the CLI: add **`--clear-cache`** on any **`live`** run (basic, tile, or plain **`--render`**) to remove **`ffprobe-tile-*`** and **`tile-randomized`** under **`~/.cache/mpv-img-tricks/`**, then continue the same run.
+- From the CLI: add **`--clear-cache`** on any **`live`** run (basic, tile, or plain **`--render`**) to remove **`ffprobe-tile-*`**, **`tile-randomized`**, and **`tile-fixed`** under **`~/.cache/mpv-img-tricks/`**, then continue the same run.
 - Or delete manually:  
   `rm -rf ~/.cache/mpv-img-tricks/ffprobe-tile-v1 ~/.cache/mpv-img-tricks/ffprobe-tile-v2 ~/.cache/mpv-img-tricks/ffprobe-tile-v3 ~/.cache/mpv-img-tricks/ffprobe-tile-v4 ~/.cache/mpv-img-tricks/ffprobe-tile-v5`
 - Or bypass the probe cache only (still uses composite cache):  
