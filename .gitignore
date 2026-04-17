@@ -13,6 +13,9 @@
 *.bmp
 *.tiff
 
+# Editor / IDE
+.vscode/
+
 # macOS
 .DS_Store
 **/.DS_Store
