@@ -17,14 +17,17 @@ def _is_glob_pattern(token: str) -> bool:
     return any(c in token for c in "*?[")
 
 
-def _natural_sort_key(path: str) -> list[str | int]:
-    parts: list[str | int] = []
+def _natural_sort_key(path: str) -> list[tuple[int, str | int]]:
+    # Type-stable key: (0, int) for numeric chunks, (1, str) for text chunks.
+    # This avoids Python 3 comparisons between raw `int` and `str` when
+    # different paths produce different token shapes at the same position.
+    parts: list[tuple[int, str | int]] = []
     for segment in path.split(os.sep):
         for t in re.split(r"(\d+)", segment):
             if t.isdigit():
-                parts.append(int(t))
+                parts.append((0, int(t)))
             elif t:
-                parts.append(t.lower())
+                parts.append((1, t.lower()))
     return parts
 
 
