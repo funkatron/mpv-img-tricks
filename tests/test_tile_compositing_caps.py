@@ -55,3 +55,20 @@ def test_ram_cap_candidate_is_not_used_to_clamp_jobs(monkeypatch: pytest.MonkeyP
     assert jobs == 2
     assert ram_cap == 1
     assert jobs > ram_cap
+
+
+def test_retryable_jpeg_failure_matches_known_encoder_and_scaler_signatures() -> None:
+    stderr_blob = """
+    [swscaler @ 0x123] Failed initializing scaling graph (Resource temporarily unavailable)
+    [mjpeg @ 0x456] ff_frame_thread_encoder_init failed
+    [out#0/image2 @ 0x789] Nothing was written into output file
+    """
+    assert tl._is_retryable_jpeg_failure(stderr_blob)
+
+
+def test_retryable_jpeg_failure_ignores_unrelated_ffmpeg_errors() -> None:
+    stderr_blob = """
+    [image2 @ 0x111] Could not open file : /tmp/missing.jpg
+    Error opening output files: No such file or directory
+    """
+    assert not tl._is_retryable_jpeg_failure(stderr_blob)

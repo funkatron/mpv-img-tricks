@@ -428,8 +428,10 @@ def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
     return f"{stem}[pjfmt];[pjfmt]format=yuvj420p[out]"
 
 
-def _ffmpeg_codec_args(args: Namespace) -> list[str]:
+def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     if not args.animate_videos:
+        if out_ext == ".png":
+            return ["-frames:v", "1", "-c:v", "png"]
         # Explicit pix fmt matches filter; avoids mjpeg 'non full-range YUV' / encoder init failures.
         return ["-frames:v", "1", "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-q:v", "2"]
     if args.encoder == "hevc_videotoolbox":
@@ -439,8 +441,9 @@ def _ffmpeg_codec_args(args: Namespace) -> list[str]:
     return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
 
 
-def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: Namespace) -> bool:
-    if not args.animate_videos:
+def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: Namespace) -> tuple[bool, str]:
+    out_ext = out_file.suffix.lower()
+    if not args.animate_videos and out_ext == ".jpg":
         filter_complex = _filter_for_still_jpeg_encode(filter_complex)
     cmd = [
         "ffmpeg",
@@ -460,10 +463,13 @@ def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: 
         else:
             cmd.extend(["-i", item])
     cmd.extend(["-filter_complex", filter_complex, "-map", "[out]"])
-    cmd.extend(_ffmpeg_codec_args(args))
+    cmd.extend(_ffmpeg_codec_args(args, out_ext=out_ext))
     cmd.append(str(out_file))
-    proc = subprocess.run(cmd, check=False)
-    return proc.returncode == 0
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    err = (proc.stderr or "").strip()
+    if proc.returncode != 0 and err:
+        print(err, file=sys.stderr)
+    return proc.returncode == 0, err
 
 
 def _composite_one_slide(
@@ -493,6 +499,19 @@ def _composite_one_slide(
     inputs = [paths[min(cursor_start + i, len(paths) - 1)] for i in range(per_slide)]
     out_file = out_dir / f"{slide_idx:04d}{ext}"
     return _render_slide(out_file, inputs, filt, args)
+
+
+def _is_retryable_jpeg_failure(stderr_text: str) -> bool:
+    text = stderr_text.lower()
+    markers = (
+        "ff_frame_thread_encoder_init failed",
+        "error while opening encoder",
+        "nothing was written into output file",
+        "failed initializing scaling graph",
+        "resource temporarily unavailable",
+        "non full-range yuv is non-standard",
+    )
+    return any(m in text for m in markers)
 
 
 def _run_mpv_filtered(cmd: list[str], *, debug: bool) -> int:
@@ -648,11 +667,26 @@ def run_tile_live(args: Namespace) -> int:
     extra = f"grid={cols}x{rows}\n" if not do_randomize else f"group={args.group_size or 4}\n"
     key = _build_cache_key("tile-randomized" if do_randomize else "tile-fixed", manifest, args, screen_w, screen_h, extra)
     out_dir = cache_root / key
-    ext = ".mp4" if args.animate_videos else ".jpg"
-    existing = sorted(str(p) for p in out_dir.glob(f"*{ext}"))
-    if existing and not getattr(args, "clear_cache", False):
-        _phase(f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_hit key={key}", quiet=bool(args.quiet))
-        return _play_mpv(existing, args, shuffle=do_randomize)
+    preferred_ext = ".mp4" if args.animate_videos else ".jpg"
+    if not getattr(args, "clear_cache", False):
+        candidate_exts = [preferred_ext]
+        if not args.animate_videos:
+            candidate_exts.append(".png")
+        for ext in candidate_exts:
+            existing = sorted(str(p) for p in out_dir.glob(f"*{ext}"))
+            if not existing:
+                continue
+            if ext == ".png":
+                _phase(
+                    f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_hit_png_fallback key={key}",
+                    quiet=bool(args.quiet),
+                )
+            else:
+                _phase(
+                    f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_hit key={key}",
+                    quiet=bool(args.quiet),
+                )
+            return _play_mpv(existing, args, shuffle=do_randomize)
 
     if out_dir.exists():
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -689,67 +723,89 @@ def run_tile_live(args: Namespace) -> int:
         quiet=bool(args.quiet),
     )
 
-    progress = _Progress(
-        phase=f"compositing-{'randomized' if do_randomize else 'fixed'}",
-        label=f"rendering {'randomized' if do_randomize else 'fixed'} composites",
-        total=total_slides,
-        quiet=bool(args.quiet),
-    )
-
-    layout_idx = 0
-    sched_cursor = 0
-
-    def schedule_next(ex: concurrent.futures.ThreadPoolExecutor) -> concurrent.futures.Future[bool] | None:
-        nonlocal layout_idx, sched_cursor
-        if layout_idx >= len(layouts):
-            return None
-        slide_idx = layout_idx
-        ccols, crows = layouts[layout_idx]
-        start = sched_cursor
-        sched_cursor += ccols * crows
-        layout_idx += 1
-        return ex.submit(
-            _composite_one_slide,
-            slide_idx=slide_idx,
-            ccols=ccols,
-            crows=crows,
-            cursor_start=start,
-            paths=paths,
-            out_dir=out_dir,
-            ext=ext,
-            screen_w=screen_w,
-            screen_h=screen_h,
-            spacing=spacing,
-            scale_mode=args.scale_mode,
-            args=args,
+    def run_compositing_pass(ext: str) -> tuple[int, int]:
+        progress = _Progress(
+            phase=f"compositing-{'randomized' if do_randomize else 'fixed'}",
+            label=f"rendering {'randomized' if do_randomize else 'fixed'} composites ({ext})",
+            total=total_slides,
+            quiet=bool(args.quiet),
         )
 
-    done = 0
-    failures = 0
-    pending: set[concurrent.futures.Future[bool]] = set()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
-        while len(pending) < jobs:
-            fut = schedule_next(ex)
-            if fut is None:
-                break
-            pending.add(fut)
-        while pending:
-            done_now, pending = wait(pending, return_when=FIRST_COMPLETED)
-            in_flight = len(pending)
-            for fut in done_now:
-                if not fut.result():
-                    failures += 1
-                done += 1
-                approx_images = min(done * max(tile_count, 1), len(paths))
-                progress.update(done, extra=f"in_flight={in_flight} images={approx_images}/{len(paths)}")
-            while len(pending) < jobs:
-                nf = schedule_next(ex)
-                if nf is None:
-                    break
-                pending.add(nf)
-    progress.finish(extra=f"slides={total_slides} failures={failures}")
+        layout_idx = 0
+        sched_cursor = 0
 
-    files = sorted(str(p) for p in out_dir.glob(f"*{ext}"))
+        def schedule_next(ex: concurrent.futures.ThreadPoolExecutor) -> concurrent.futures.Future[tuple[bool, str]] | None:
+            nonlocal layout_idx, sched_cursor
+            if layout_idx >= len(layouts):
+                return None
+            slide_idx = layout_idx
+            ccols, crows = layouts[layout_idx]
+            start = sched_cursor
+            sched_cursor += ccols * crows
+            layout_idx += 1
+            return ex.submit(
+                _composite_one_slide,
+                slide_idx=slide_idx,
+                ccols=ccols,
+                crows=crows,
+                cursor_start=start,
+                paths=paths,
+                out_dir=out_dir,
+                ext=ext,
+                screen_w=screen_w,
+                screen_h=screen_h,
+                spacing=spacing,
+                scale_mode=args.scale_mode,
+                args=args,
+            )
+
+        done = 0
+        failures = 0
+        retryable = 0
+        pending: set[concurrent.futures.Future[tuple[bool, str]]] = set()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
+            while len(pending) < jobs:
+                fut = schedule_next(ex)
+                if fut is None:
+                    break
+                pending.add(fut)
+            while pending:
+                done_now, pending = wait(pending, return_when=FIRST_COMPLETED)
+                in_flight = len(pending)
+                for fut in done_now:
+                    ok, stderr_text = fut.result()
+                    if not ok:
+                        failures += 1
+                        if ext == ".jpg" and _is_retryable_jpeg_failure(stderr_text):
+                            retryable += 1
+                    done += 1
+                    approx_images = min(done * max(tile_count, 1), len(paths))
+                    progress.update(done, extra=f"in_flight={in_flight} images={approx_images}/{len(paths)}")
+                while len(pending) < jobs:
+                    nf = schedule_next(ex)
+                    if nf is None:
+                        break
+                    pending.add(nf)
+        progress.finish(extra=f"slides={total_slides} failures={failures}")
+        return failures, retryable
+
+    output_ext = preferred_ext
+    failures, retryable_failures = run_compositing_pass(output_ext)
+    if failures and not args.animate_videos and output_ext == ".jpg" and retryable_failures > 0:
+        _phase(
+            f"phase=compositing-{'randomized' if do_randomize else 'fixed'} "
+            f"msg=retry_png_fallback reason=jpeg_or_scaler_failure failures={failures}",
+            quiet=bool(args.quiet),
+        )
+        for p in out_dir.glob("*.jpg"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        output_ext = ".png"
+        failures, _ = run_compositing_pass(output_ext)
+
+    files = sorted(str(p) for p in out_dir.glob(f"*{output_ext}"))
     if not files:
         return 1
     _phase(f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_saved dir={out_dir}", quiet=bool(args.quiet))
