@@ -6,7 +6,7 @@ MPV_IMG_TRICKS_SLIDESHOW_BINDINGS_RELPATH="mpv-scripts/slideshow-bindings.lua"
 
 # Usage: mpv_img_tricks_slideshow_bindings_should_load <cli_yes_no>
 # cli_yes_no: from --use-slideshow-bindings (mpv-pipeline.sh), or "yes" for
-# direct mpv launches (e.g. img-effects run_mpv). If MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS
+# direct mpv launches. If MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS
 # is non-empty, loading is disabled (overrides CLI).
 mpv_img_tricks_slideshow_bindings_should_load() {
   local cli_toggle="${1:-yes}"

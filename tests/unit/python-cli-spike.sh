@@ -47,19 +47,13 @@ printf 'slideshow.sh %s\n' "$*" >> "$BACKEND_LOG"
 exit 0
 EOF
 
-cat > "${BACKEND_DIR}/img-effects.sh" <<'EOF'
-#!/usr/bin/env bash
-printf 'img-effects.sh %s\n' "$*" >> "$BACKEND_LOG"
-exit 0
-EOF
-
 cat > "${BACKEND_DIR}/images-to-video.sh" <<'EOF'
 #!/usr/bin/env bash
 printf 'images-to-video.sh %s\n' "$*" >> "$BACKEND_LOG"
 exit 0
 EOF
 
-chmod +x "${BACKEND_DIR}/slideshow.sh" "${BACKEND_DIR}/img-effects.sh" "${BACKEND_DIR}/images-to-video.sh"
+chmod +x "${BACKEND_DIR}/slideshow.sh" "${BACKEND_DIR}/images-to-video.sh"
 
 cat > "${WORK_DIR}/bin/mpv" <<'EOF'
 #!/usr/bin/env bash
@@ -112,13 +106,20 @@ fi
 rg -q "mutually exclusive|not allowed" "${WORK_DIR}/mx.err" || rg -q "argument" "${WORK_DIR}/mx.err" || fail "expected argparse error for --fit --fill"
 
 : > "$LOG_FILE"
-slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --randomize --duration 0.01 >/dev/null
-assert_contains "$LOG_FILE" "img-effects.sh tile ${MEDIA_DIR}/*.mov --duration 0.01 --scale-mode fit --instances 1 --grid 2x2 --randomize --order natural"
+slideshow live "$MEDIA_DIR" --effect tile --grid 2x2 --randomize --duration 0.01 >/dev/null
+assert_contains "$LOG_FILE" "mpv "
+
+: > "$LOG_FILE"
+slideshow live "$MEDIA_DIR" --effect tile --grid 1x1 --instances 2 --display-map 0,1 --master-control --duration 0.01 >/dev/null
+assert_contains "$LOG_FILE" "mpv "
+assert_contains "$LOG_FILE" "--input-ipc-server="
+assert_contains "$LOG_FILE" "--fs-screen=0"
+assert_contains "$LOG_FILE" "--fs-screen=1"
 
 : > "${WORK_DIR}/dry-clear.txt"
-slideshow live "${MEDIA_DIR}/*.mov" --effect tile --grid 2x2 --clear-cache --dry-run >"${WORK_DIR}/dry-clear.txt"
+slideshow live "$MEDIA_DIR" --effect tile --grid 1x1 --clear-cache --dry-run >"${WORK_DIR}/dry-clear.txt"
 assert_contains "${WORK_DIR}/dry-clear.txt" "--clear-cache"
-assert_contains "${WORK_DIR}/dry-clear.txt" "img-effects.sh tile"
+assert_contains "${WORK_DIR}/dry-clear.txt" "python-tile-live"
 
 : > "$LOG_FILE"
 if ! slideshow live "$MEDIA_DIR" --clear-cache --duration 0.01 >/dev/null 2>"${WORK_DIR}/clear-basic.err"; then
