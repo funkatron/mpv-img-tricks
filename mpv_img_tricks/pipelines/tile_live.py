@@ -372,7 +372,21 @@ def _parse_grid(grid: str | None) -> tuple[int, int]:
     return cols, rows
 
 
-def _detect_screen_resolution(fallback: str, *, quiet: bool) -> tuple[int, int]:
+def _parse_resolution(resolution: str) -> tuple[int, int]:
+    m = re.fullmatch(r"(\d+)x(\d+)", resolution.strip())
+    if not m:
+        raise ValueError(f"invalid resolution: {resolution!r}")
+    w, h = int(m.group(1)), int(m.group(2))
+    if w < 1 or h < 1:
+        raise ValueError(f"invalid resolution: {resolution!r}")
+    return w, h
+
+
+def _detect_screen_resolution(fallback: str, *, quiet: bool, prefer_fallback: bool = False) -> tuple[int, int]:
+    if prefer_fallback:
+        w, h = _parse_resolution(fallback)
+        _phase(f"phase=screen msg=using_resolution_override size={w}x{h}", quiet=quiet)
+        return w, h
     if sys.platform == "darwin" and shutil.which("system_profiler"):
         proc = subprocess.run(["system_profiler", "SPDisplaysDataType"], capture_output=True, text=True, check=False)
         for pat in (r"Resolution:\s*([0-9]+)\s*x\s*([0-9]+)", r"UI Looks like:\s*([0-9]+)\s*x\s*([0-9]+)"):
@@ -385,8 +399,7 @@ def _detect_screen_resolution(fallback: str, *, quiet: bool) -> tuple[int, int]:
         if m:
             return int(m.group(1)), int(m.group(2))
     _phase(f"phase=screen msg=no_display_probe using_resolution={fallback}", quiet=quiet)
-    w, h = fallback.split("x", 1)
-    return int(w), int(h)
+    return _parse_resolution(fallback)
 
 
 def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str) -> str:
@@ -607,7 +620,12 @@ def build_tile_backend_command(args: Namespace) -> list[str]:
             cmd.append("--clear-cache")
         return cmd
     cols, rows = _parse_grid(args.grid)
-    screen_w, screen_h = _detect_screen_resolution(args.resolution, quiet=True)
+    resolution_override = bool(args.resolution and args.resolution != "1920x1080")
+    screen_w, screen_h = _detect_screen_resolution(
+        args.resolution,
+        quiet=True,
+        prefer_fallback=resolution_override,
+    )
     if len(paths) <= cols * rows and int(args.spacing or 0) == 0:
         cmd = ["mpv", f"--geometry={screen_w}x{screen_h}+0+0", "--fullscreen", f"--image-display-duration={args.duration}"]
         cmd.extend(paths[: cols * rows])
@@ -640,7 +658,12 @@ def run_tile_live(args: Namespace) -> int:
 
     cols, rows = _parse_grid(args.grid)
     spacing = int(args.spacing or 0)
-    screen_w, screen_h = _detect_screen_resolution(args.resolution, quiet=bool(args.quiet))
+    resolution_override = bool(args.resolution and args.resolution != "1920x1080")
+    screen_w, screen_h = _detect_screen_resolution(
+        args.resolution,
+        quiet=bool(args.quiet),
+        prefer_fallback=resolution_override,
+    )
     _phase(f"phase=screen msg=resolved size={screen_w}x{screen_h}", quiet=bool(args.quiet))
 
     do_randomize = bool(args.randomize)

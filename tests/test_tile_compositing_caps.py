@@ -72,3 +72,8 @@ def test_retryable_jpeg_failure_ignores_unrelated_ffmpeg_errors() -> None:
     Error opening output files: No such file or directory
     """
     assert not tl._is_retryable_jpeg_failure(stderr_blob)
+
+
+def test_detect_screen_resolution_prefers_override_value() -> None:
+    w, h = tl._detect_screen_resolution("1280x720", quiet=True, prefer_fallback=True)
+    assert (w, h) == (1280, 720)
