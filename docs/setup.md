@@ -119,7 +119,7 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 | Mode | Meaning of `--duration` |
 |------|-------------------------|
 | **basic** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
-| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments, ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
+| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate-videos`**) or **Ken Burns** tile motion (**`--tile-motion ken-burns`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
 
 ### Plain render (`--render` without `--effect`)
 
@@ -179,6 +179,18 @@ Use `--tile-quality fast|balanced|high` to tune compositing quality/performance 
 - `high` — higher-quality scaler flags and slower encode presets.
 
 `--tile-hwaccel auto` enables an experimental hardware-acceleration path for animated tiles (`--animate-videos`) by requesting ffmpeg decode hwaccel and preferring VideoToolbox encoding on macOS when `--encoder auto` is used. In local A/B testing this mode was faster but had a slightly higher peak RSS; use `off` when minimizing memory is more important than speed. Keep `--tile-hwaccel off` (default) for the most predictable cross-platform behavior.
+
+### Tile motion (Ken Burns)
+
+- **`--tile-motion off|ken-burns`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking. Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
+- **`--tile-parallax off|auto`** (default **`off`**): with Ken Burns, vary pan direction and intensity **per tile index** in a deterministic way. **`--tile-parallax auto` requires `--tile-motion ken-burns`**.
+- **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`1.5`** for tuning.
+
+Example:
+
+```bash
+uv run slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
+```
 
 ## Routine checks
 

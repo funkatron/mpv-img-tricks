@@ -87,3 +87,41 @@ def test_tile_live_2x1_fixed_grid_lavfi_mpv(
     out = log.read_text(encoding="utf-8", errors="replace")
     assert "mpv" in out
     assert "--lavfi-complex" in out
+
+
+def test_tile_live_ken_burns_uses_temporal_ffmpeg(
+    two_image_dir,
+    repo_root,
+    stub_bin_dir,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ken Burns forces compositing path; ffmpeg argv should include zoompan and looped still inputs."""
+    monkeypatch.chdir(repo_root)
+    buf = StringIO()
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "slideshow",
+            "live",
+            str(two_image_dir),
+            "--effect",
+            "tile",
+            "--grid",
+            "2x2",
+            "--randomize",
+            "--tile-motion",
+            "ken-burns",
+            "--tile-parallax",
+            "auto",
+            "--duration",
+            "0.01",
+        ],
+    ), redirect_stderr(buf):
+        rc = main()
+    assert rc == 0
+    log = stub_bin_dir.parent / "tool.log"
+    t = log.read_text(encoding="utf-8", errors="replace")
+    assert "ffmpeg" in t
+    assert "zoompan=" in t
+    assert "-loop" in t

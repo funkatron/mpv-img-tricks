@@ -37,6 +37,42 @@ def test_validate_render_with_effect() -> None:
     assert ex.value.code == 2
 
 
+def test_validate_tile_parallax_requires_ken_burns() -> None:
+    p = build_parser()
+    args = p.parse_args(
+        [
+            "live",
+            "d",
+            "--effect",
+            "tile",
+            "--tile-parallax",
+            "auto",
+        ]
+    )
+    with pytest.raises(SystemExit) as ex:
+        validate_live_args(args, p)
+    assert ex.value.code == 2
+
+
+def test_validate_tile_motion_strength_positive() -> None:
+    p = build_parser()
+    args = p.parse_args(
+        [
+            "live",
+            "d",
+            "--effect",
+            "tile",
+            "--tile-motion",
+            "ken-burns",
+            "--tile-motion-strength",
+            "0",
+        ]
+    )
+    with pytest.raises(SystemExit) as ex:
+        validate_live_args(args, p)
+    assert ex.value.code == 2
+
+
 def test_main_help_exits(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as e:
         with patch.object(sys, "argv", ["slideshow", "-h"]):

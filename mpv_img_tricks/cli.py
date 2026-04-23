@@ -159,6 +159,24 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
         default="off",
         help="Experimental tile hwaccel for animated tiles; auto is usually faster but may use more RAM (default: off)",
     )
+    parser.add_argument(
+        "--tile-motion",
+        choices=["off", "ken-burns"],
+        default="off",
+        help="Per-tile slow pan/zoom (Ken Burns) during compositing; uses short MP4 slides when not --animate-videos (default: off)",
+    )
+    parser.add_argument(
+        "--tile-parallax",
+        choices=["off", "auto"],
+        default="off",
+        help="With --tile-motion ken-burns, vary pan direction/speed per tile index (deterministic; default: off)",
+    )
+    parser.add_argument(
+        "--tile-motion-strength",
+        type=float,
+        default=1.0,
+        help="Scale Ken Burns motion intensity (default: 1.0; try 0.5–1.5)",
+    )
 
 
 def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:
@@ -244,6 +262,13 @@ def build_plain_render_dry_run_line(args: Namespace) -> str:
 def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None:
     if args.master_control and args.no_master_control:
         parser.error("choose either --master-control or --no-master-control")
+
+    if getattr(args, "effect", None) == "tile":
+        if getattr(args, "tile_parallax", "off") == "auto" and getattr(args, "tile_motion", "off") != "ken-burns":
+            parser.error("--tile-parallax auto requires --tile-motion ken-burns")
+
+    if getattr(args, "tile_motion_strength", 1.0) <= 0:
+        parser.error("--tile-motion-strength must be positive")
 
     if args.render and args.effect:
         parser.error("--effect cannot be combined with --render (use plain --render only)")

@@ -462,6 +462,50 @@ def _apply_large_grid_safe_resolution(
     return safe_w, safe_h
 
 
+def _tile_motion_is_ken_burns(args: Namespace) -> bool:
+    return str(getattr(args, "tile_motion", "off")) == "ken-burns"
+
+
+def _tile_slide_outputs_mp4(args: Namespace) -> bool:
+    """Ken Burns needs a temporal encode; still JPEG cannot hold motion."""
+    return bool(args.animate_videos) or _tile_motion_is_ken_burns(args)
+
+
+def _zoompan_ken_burns(
+    cell_w: int,
+    cell_h: int,
+    tile_index: int,
+    *,
+    duration: float,
+    strength: float,
+    parallax: str,
+) -> str:
+    """Return a zoompan filter chain segment (no leading label)."""
+    fps = 30
+    d = max(2, int(max(float(duration), 1e-6) * fps))
+    strength = max(float(strength), 0.05)
+    z_inc = 0.0001 * strength
+    z_cap = min(1.0 + 0.12 * strength, 1.25)
+    if parallax == "auto":
+        dirx = 1.0 if (tile_index % 2) == 0 else -1.0
+        diry = -1.0 if ((tile_index // 2) % 2) == 0 else 1.0
+        x_mag = 0.12 * strength * (0.85 + 0.05 * (tile_index % 5))
+        y_mag = 0.07 * strength * (0.85 + 0.05 * ((tile_index + 1) % 5))
+    else:
+        dirx = 1.0
+        diry = 0.5
+        x_mag = 0.12 * strength
+        y_mag = 0.06 * strength
+    x_step = x_mag * dirx
+    y_step = y_mag * diry
+    x_expr = f"x+{x_step:.6f}" if x_step >= 0 else f"x{x_step:.6f}"
+    y_expr = f"y+{y_step:.6f}" if y_step >= 0 else f"y{y_step:.6f}"
+    return (
+        f"zoompan=z='min(zoom+{z_inc:.8f},{z_cap:.4f})':"
+        f"x='{x_expr}':y='{y_expr}':d={d}:s={cell_w}x{cell_h}:fps={fps}"
+    )
+
+
 def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str, *, tile_quality: str) -> str:
     scale_flags = {
         "fast": "fast_bilinear",
@@ -480,7 +524,18 @@ def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str, *, tile_quality
 
 
 def _build_filter(
-    *, cols: int, rows: int, screen_w: int, screen_h: int, spacing: int, scale_mode: str, tile_quality: str
+    *,
+    cols: int,
+    rows: int,
+    screen_w: int,
+    screen_h: int,
+    spacing: int,
+    scale_mode: str,
+    tile_quality: str,
+    tile_motion: str = "off",
+    tile_parallax: str = "off",
+    tile_motion_strength: float = 1.0,
+    duration: float = 2.0,
 ) -> tuple[str, int]:
     tile_count = cols * rows
     usable_w = screen_w - spacing * (cols - 1)
@@ -491,14 +546,27 @@ def _build_filter(
     cell_h = usable_h // rows
     cell = _tile_cell_filter(cell_w, cell_h, scale_mode, tile_quality=tile_quality)
     parts: list[str] = []
+    motion_kb = tile_motion == "ken-burns"
     for i in range(tile_count):
-        parts.append(f"[{i}:v]{cell}[s{i}]")
-    stack_inputs = "".join(f"[s{i}]" for i in range(tile_count))
+        if motion_kb:
+            zp = _zoompan_ken_burns(
+                cell_w,
+                cell_h,
+                i,
+                duration=float(duration),
+                strength=float(tile_motion_strength),
+                parallax=str(tile_parallax),
+            )
+            parts.append(f"[{i}:v]{cell},{zp}[m{i}]")
+        else:
+            parts.append(f"[{i}:v]{cell}[s{i}]")
+    stack_inputs = "".join(f"[{'m' if motion_kb else 's'}{i}]" for i in range(tile_count))
     layout = "|".join(
         f"{(i % cols) * (cell_w + spacing)}_{(i // cols) * (cell_h + spacing)}" for i in range(tile_count)
     )
     if tile_count == 1:
-        parts.append(f"[s0]copy[grid];[grid]pad={screen_w}:{screen_h}:(ow-iw)/2:(oh-ih)/2:black[out]")
+        src0 = "m0" if motion_kb else "s0"
+        parts.append(f"[{src0}]copy[grid];[grid]pad={screen_w}:{screen_h}:(ow-iw)/2:(oh-ih)/2:black[out]")
     else:
         parts.append(
             f"{stack_inputs}xstack=inputs={tile_count}:layout={layout}:fill=black[grid];[grid]pad={screen_w}:{screen_h}:(ow-iw)/2:(oh-ih)/2:black[out]"
@@ -516,7 +584,8 @@ def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
 
 def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     tile_quality = str(getattr(args, "tile_quality", "balanced"))
-    if not args.animate_videos:
+    motion_mp4 = _tile_motion_is_ken_burns(args) and out_ext.lower() == ".mp4"
+    if not args.animate_videos and not motion_mp4:
         if out_ext == ".png":
             return ["-frames:v", "1", "-c:v", "png"]
         quality_to_q = {"fast": "5", "balanced": "2", "high": "1"}
@@ -566,8 +635,9 @@ def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: 
         "1",
     ]
     cmd.extend(_ffmpeg_hwaccel_args(args))
+    temporal_stills = bool(args.animate_videos) or _tile_motion_is_ken_burns(args)
     for item in inputs:
-        if args.animate_videos and not _is_video(item):
+        if temporal_stills and not _is_video(item):
             cmd.extend(["-loop", "1", "-t", str(args.duration), "-i", item])
         elif _is_video(item):
             cmd.extend(["-ss", "0.25", "-i", item])
@@ -608,6 +678,10 @@ def _composite_one_slide(
         spacing=spacing,
         scale_mode=scale_mode,
         tile_quality=tile_quality,
+        tile_motion=str(getattr(args, "tile_motion", "off")),
+        tile_parallax=str(getattr(args, "tile_parallax", "off")),
+        tile_motion_strength=float(getattr(args, "tile_motion_strength", 1.0)),
+        duration=float(args.duration),
     )
     inputs = [paths[min(cursor_start + i, len(paths) - 1)] for i in range(per_slide)]
     out_file = out_dir / f"{slide_idx:04d}{ext}"
@@ -709,7 +783,11 @@ def _build_cache_key(effect: str, manifest: str, args: Namespace, screen_w: int,
         f"duration={args.duration}\nscale={args.scale_mode}\nspacing={args.spacing or 0}\n"
         f"animate={args.animate_videos}\nencoder={args.encoder}\nresolved_encoder={resolved_encoder}\n"
         f"tile_hwaccel={getattr(args, 'tile_hwaccel', 'off')}\n"
-        f"tile_quality={getattr(args, 'tile_quality', 'balanced')}\n{extras}\n"
+        f"tile_quality={getattr(args, 'tile_quality', 'balanced')}\n"
+        f"tile_motion={getattr(args, 'tile_motion', 'off')}\n"
+        f"tile_parallax={getattr(args, 'tile_parallax', 'off')}\n"
+        f"tile_motion_strength={getattr(args, 'tile_motion_strength', 1.0)}\n"
+        f"{extras}\n"
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -739,7 +817,11 @@ def build_tile_backend_command(args: Namespace) -> list[str]:
         safe_mode=safe_mode,
         quiet=True,
     )
-    if len(paths) <= cols * rows and int(args.spacing or 0) == 0:
+    if (
+        len(paths) <= cols * rows
+        and int(args.spacing or 0) == 0
+        and str(getattr(args, "tile_motion", "off")) == "off"
+    ):
         cmd = ["mpv", f"--geometry={screen_w}x{screen_h}+0+0", "--fullscreen", f"--image-display-duration={args.duration}"]
         cmd.extend(paths[: cols * rows])
         return cmd
@@ -798,7 +880,13 @@ def run_tile_live(args: Namespace) -> int:
 
     do_randomize = bool(args.randomize)
     tile_count = cols * rows
-    if len(paths) <= tile_count and spacing == 0 and not do_randomize and int(args.instances) == 1:
+    if (
+        len(paths) <= tile_count
+        and spacing == 0
+        and not do_randomize
+        and int(args.instances) == 1
+        and str(getattr(args, "tile_motion", "off")) == "off"
+    ):
         filter_complex, n_tiles = _build_filter(
             cols=cols,
             rows=rows,
@@ -826,10 +914,10 @@ def run_tile_live(args: Namespace) -> int:
     extra = f"grid={cols}x{rows}\n" if not do_randomize else f"group={args.group_size or 4}\n"
     key = _build_cache_key("tile-randomized" if do_randomize else "tile-fixed", manifest, args, screen_w, screen_h, extra)
     out_dir = cache_root / key
-    preferred_ext = ".mp4" if args.animate_videos else ".jpg"
+    preferred_ext = ".mp4" if _tile_slide_outputs_mp4(args) else ".jpg"
     if not getattr(args, "clear_cache", False):
         candidate_exts = [preferred_ext]
-        if not args.animate_videos:
+        if not _tile_slide_outputs_mp4(args):
             candidate_exts.append(".png")
         for ext in candidate_exts:
             existing = sorted(str(p) for p in out_dir.glob(f"*{ext}"))
@@ -960,7 +1048,7 @@ def run_tile_live(args: Namespace) -> int:
 
     output_ext = preferred_ext
     failures, retryable_failures = run_compositing_pass(output_ext)
-    if failures and not args.animate_videos and output_ext == ".jpg" and retryable_failures > 0:
+    if failures and not _tile_slide_outputs_mp4(args) and output_ext == ".jpg" and retryable_failures > 0:
         _phase(
             f"phase=compositing-{'randomized' if do_randomize else 'fixed'} "
             f"msg=retry_png_fallback reason=jpeg_or_scaler_failure failures={failures}",

@@ -192,3 +192,92 @@ def test_cache_key_changes_with_tile_hwaccel_mode(monkeypatch: pytest.MonkeyPatc
         720,
     )
     assert key_off != key_auto
+
+
+def test_cache_key_changes_with_tile_motion_settings() -> None:
+    base = dict(
+        duration="1.0",
+        scale_mode="fit",
+        spacing="0",
+        animate_videos=False,
+        encoder="auto",
+        tile_quality="balanced",
+        tile_hwaccel="off",
+    )
+    key_off = tl._build_cache_key(
+        "tile-fixed",
+        "manifest-x",
+        Namespace(**base, tile_motion="off", tile_parallax="off", tile_motion_strength=1.0),
+        1280,
+        720,
+    )
+    key_kb = tl._build_cache_key(
+        "tile-fixed",
+        "manifest-x",
+        Namespace(**base, tile_motion="ken-burns", tile_parallax="off", tile_motion_strength=1.0),
+        1280,
+        720,
+    )
+    key_par = tl._build_cache_key(
+        "tile-fixed",
+        "manifest-x",
+        Namespace(**base, tile_motion="ken-burns", tile_parallax="auto", tile_motion_strength=1.0),
+        1280,
+        720,
+    )
+    assert key_off != key_kb
+    assert key_kb != key_par
+
+
+def test_build_filter_ken_burns_includes_zoompan() -> None:
+    filt, n = tl._build_filter(
+        cols=2,
+        rows=1,
+        screen_w=640,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=1.0,
+    )
+    assert n == 2
+    assert "zoompan=" in filt
+    assert "[m0]" in filt and "[m1]" in filt
+    assert "xstack=inputs=2" in filt
+
+
+def test_build_filter_parallax_changes_zoompan_between_tiles() -> None:
+    filt0, _ = tl._build_filter(
+        cols=2,
+        rows=1,
+        screen_w=640,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    filt1, _ = tl._build_filter(
+        cols=2,
+        rows=1,
+        screen_w=640,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="auto",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    assert filt0 != filt1
+    # Tile 0 vs tile 1: parallax auto flips horizontal pan direction (x+ vs x-).
+    seg0 = filt1.split("[1:v]")[0]
+    assert "x='x+" in seg0 or "x='x-" in seg0
+    assert "x='x+" in filt1 and "x='x-" in filt1
