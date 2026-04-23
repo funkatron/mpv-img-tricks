@@ -24,3 +24,12 @@ packages = ["mpv_img_tricks"]
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ["-ra", "--import-mode=importlib"]
+markers = [
+    "tile_functional: in-process tile pipeline with stubbed mpv/ffmpeg/ffprobe",
+    "integration: optional subprocess/uv or heavy checks (not part of default fast contract)",
+]

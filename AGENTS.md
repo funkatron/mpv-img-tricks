@@ -51,11 +51,12 @@ Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks
 ## Tests and CI
 
 ```bash
-make test    # unit tests (bash + pytest)
-make ci      # unit tests + scoped shellcheck (matches [.github/workflows/ci.yml](.github/workflows/ci.yml))
+make test   # `tests/run-unit.sh` → uv sync + pytest (`tests/`)
+make pytest # pytest only (uv must already be configured)
+make ci     # unit tests + scoped shellcheck (matches [.github/workflows/ci.yml](.github/workflows/ci.yml))
 ```
 
-Harness: `tests/run-unit.sh` (needs **`uv`**, **`rg`**). Assertions: **`tests/unit/*.sh`** and **`tests/test_*.py`**. Optional ffmpeg smoke: [tests/manual/README.md](tests/manual/README.md).
+**Pytest** is the canonical behavior suite: **`tests/test_*.py`**. `tests/run-unit.sh` only runs **pytest** (no separate Bash test harness). Optional real-ffmpeg work: [tests/manual/README.md](tests/manual/README.md).
 
 ## Conventions for changes
 
