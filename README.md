@@ -10,7 +10,8 @@ This is a personal utility project. Breaking CLI changes are acceptable when the
 
 **More detail:** [docs/setup.md](docs/setup.md) — prerequisites (`uv`, Python 3.11+, mpv, ffmpeg), all ways to invoke the CLI, environment variables, and troubleshooting.
 
-**Architecture and maintenance:** [docs/discovery.md](docs/discovery.md) — how the Python CLI maps to Bash backends, test coverage, and where to change behavior.
+**Architecture and maintenance:** [docs/architecture.md](docs/architecture.md) — current runtime flow, module map, and where to change behavior safely.  
+**Historical snapshot:** [docs/archived/discovery.md](docs/archived/discovery.md) (archived, may be stale).
 
 **Improvement ideas (prioritized):** [docs/recommendations.md](docs/recommendations.md) — UX, testing/CI, portability, Python vs Bash boundary, security, repo hygiene.
 
@@ -187,6 +188,11 @@ Effect-specific:
   --max-files COUNT          Limit discovered files
   --recursive                Recurse into subdirectories
   --random-scale             Randomly alternate between fill and fit scaling
+  --tile-quality LEVEL       fast|balanced|high compositing preset (default: balanced)
+  --tile-safe-mode MODE      off|warn|auto large-grid safety policy (default: auto)
+  --auto-ram-cap             Apply RAM-based worker cap (default)
+  --no-auto-ram-cap          Disable RAM-based worker cap
+  --tile-hwaccel MODE        Experimental tile hwaccel mode: off|auto (default: off)
 
 Diagnostics:
   --debug                    Print backend debug info
@@ -231,11 +237,17 @@ Current limitation: `--watch` currently supports only a single instance (`--inst
 ./slideshow live ~/pics --effect tile --grid 4x1 --duration 1.5
 ./slideshow live ~/pics --effect tile --grid 3x2 --duration 2.5
 
+# Performance-oriented tile presets
+./slideshow live ~/pics --effect tile --grid 10x6 --resolution 1280x720 --max-files 600
+./slideshow live ~/pics --effect tile --grid 15x8 --resolution 1920x1080 --tile-quality balanced
+./slideshow live ~/pics --effect tile --grid 20x10 --tile-safe-mode auto --tile-quality fast --max-files 600
+
 # Randomized tiling examples
 ./slideshow live ~/pics --effect tile --randomize --group-size 3 --duration 2
 ./slideshow live ~/pics --effect tile --randomize --group-size 5 --duration 4
 ./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos
 ./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos --encoder hevc_videotoolbox
+./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --animate-videos --tile-hwaccel auto
 ```
 
 ## Tile Effect Details
@@ -250,6 +262,9 @@ The **tile** effect creates a live slideshow that displays multiple images simul
 - **Flexible grid sizes** - Support for any grid configuration (1x3, 2x2, 3x2, etc.)
 - **Randomized layouts** - Different grid layouts for each group of images
 - **Group-based tiling** - Process images in customizable groups (`--group-size` as any positive integer)
+- **Quality/perf presets** - `--tile-quality fast|balanced|high` tunes scaling and encode presets
+- **Large-grid guardrails** - `--tile-safe-mode auto` downscales very large auto-resolution grids to keep memory lower
+- **RAM-aware worker clamp** - Enabled by default via `--auto-ram-cap` (disable with `--no-auto-ram-cap`)
 
 ### Grid Options:
 - **1x3** - 3 columns x 1 row

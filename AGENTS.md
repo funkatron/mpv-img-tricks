@@ -1,6 +1,6 @@
 # Agent notes — mpv-img-tricks
 
-Concise orientation for coding assistants. End-user install and flags: [docs/setup.md](docs/setup.md). Deeper map: [docs/discovery.md](docs/discovery.md).
+Concise orientation for coding assistants. End-user install and flags: [docs/setup.md](docs/setup.md). Deeper map: [docs/architecture.md](docs/architecture.md). Historical snapshot: [docs/archived/discovery.md](docs/archived/discovery.md).
 
 ## What this repo is
 
@@ -18,6 +18,15 @@ Concise orientation for coding assistants. End-user install and flags: [docs/set
   - **`--effect`** with **`--render`** is rejected
 
 Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks/cli.py`.
+
+## Tile performance controls (current)
+
+- `mpv_img_tricks/pipelines/tile_live.py` is the tile runtime; behavior is tuned through CLI flags in `mpv_img_tricks/cli.py`.
+- Worker scheduling now uses `cpu_cap`, `tile_cap`, and optional RAM clamp (`--auto-ram-cap` on by default; disable with `--no-auto-ram-cap`).
+- `job_schedule` logs include `limit_reason` (`cpu`, `tile`, `ram`, or ties such as `tile+ram`) to show which cap constrained workers.
+- Large-grid safety policy is controlled by `--tile-safe-mode` (`auto` / `warn` / `off`).
+- Compositing quality/perf tradeoffs are controlled by `--tile-quality` (`fast` / `balanced` / `high`).
+- Animated tile path has experimental hwaccel toggle `--tile-hwaccel` (`off` / `auto`); `auto` is usually faster but can raise peak RSS.
 
 ## Repo layout (high signal)
 
@@ -59,5 +68,6 @@ Harness: `tests/run-unit.sh` (needs **`uv`**, **`rg`**). Assertions: **`tests/un
 ## Docs you might edit
 
 - **[docs/setup.md](docs/setup.md)** — prerequisites, env vars, mpv shortcuts, troubleshooting.
-- **[docs/discovery.md](docs/discovery.md)** — architecture; update if control flow or major file roles change.
+- **[docs/architecture.md](docs/architecture.md)** — living architecture map; update if control flow or major file roles change.
+- **[docs/archived/discovery.md](docs/archived/discovery.md)** — archived historical snapshot (read-only context).
 - **[README.md](README.md)** — user-facing overview; keep in sync for install and primary commands only.

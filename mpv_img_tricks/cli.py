@@ -128,6 +128,37 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Randomly alternate between fit and fill",
     )
+    parser.add_argument(
+        "--tile-quality",
+        choices=["fast", "balanced", "high"],
+        default="balanced",
+        help="Tile compositing quality/perf preset (default: balanced)",
+    )
+    parser.add_argument(
+        "--tile-safe-mode",
+        choices=["off", "warn", "auto"],
+        default="auto",
+        help="Large-grid safety mode: off, warn, or auto downscale when resolution is not explicit",
+    )
+    parser.add_argument(
+        "--auto-ram-cap",
+        dest="auto_ram_cap",
+        action="store_true",
+        default=True,
+        help="Clamp tile worker count using installed RAM heuristics (default: on)",
+    )
+    parser.add_argument(
+        "--no-auto-ram-cap",
+        dest="auto_ram_cap",
+        action="store_false",
+        help="Disable RAM-based worker clamping for tile compositing",
+    )
+    parser.add_argument(
+        "--tile-hwaccel",
+        choices=["off", "auto"],
+        default="off",
+        help="Experimental tile hwaccel for animated tiles; auto is usually faster but may use more RAM (default: off)",
+    )
 
 
 def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:

@@ -2,7 +2,7 @@
 
 Forward-looking improvements grounded in the current architecture (Python CLI + Bash backends + mpv/ffmpeg). **Not a roadmap commitment** — use this to prioritize issues and PRs.
 
-**Related:** [discovery.md](discovery.md) (how things work today), [setup.md](setup.md) (install and env). **Execution order:** [plan.md](plan.md) (phases and implementation snapshot).
+**Related:** [architecture.md](architecture.md) (how things work today), [setup.md](setup.md) (install and env). **Execution order:** [plan.md](plan.md) (phases and implementation snapshot).
 
 ---
 

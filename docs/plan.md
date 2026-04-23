@@ -39,7 +39,7 @@ This document turns **[recommendations.md](recommendations.md)** into an impleme
 | **R-02** | TTY `\r` plus **newline** progress every *N* slides or *T* seconds (pipe-friendly). |
 | **R-04** | `--quiet`: suppress phase chatter; still print errors. Plumbed from **Python CLI → backends**. |
 | **R-03** | **`--verbose-ffmpeg`** and/or tie compositing **ffmpeg** log/stats to **`--debug`**. |
-| **R-05** | “Tiled slideshow phases” in **setup.md** and/or **discovery.md** §12. |
+| **R-05** | “Tiled slideshow phases” in **setup.md** and/or **architecture.md**. |
 | **R-19** | Guard **`nice -n 10`**: if `nice` unusable, run **ffmpeg** without it. |
 
 ### Phase C — CLI and consistency
