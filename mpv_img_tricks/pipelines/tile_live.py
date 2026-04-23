@@ -26,6 +26,10 @@ _VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v", ".mkv", ".webm", ".avi", ".mpg", ".mp
 
 # Conservative: scale parallel ffmpeg workers down as grid/cell count grows (Pass 1).
 _TILE_COMPOSITE_TILE_BUDGET = 28
+_LARGE_GRID_TILE_THRESHOLD = 120
+_LARGE_GRID_SAFE_RESOLUTION = (1280, 720)
+_RAM_CAP_RESERVE_BYTES = 4 * 1024 * 1024 * 1024
+_RAM_CAP_BYTES_PER_WORKER = int(1.25 * 1024 * 1024 * 1024)
 
 
 def _probe_installed_ram_bytes() -> int | None:
@@ -64,11 +68,11 @@ def _probe_installed_ram_bytes() -> int | None:
 
 
 def _ram_cap_candidate_for_logging(installed_bytes: int | None) -> int | None:
-    """Hypothetical max concurrent workers from installed RAM; logged only — does not affect scheduling."""
+    """Heuristic max concurrent workers from installed RAM."""
     if installed_bytes is None or installed_bytes <= 0:
         return None
-    # ~1 worker per 512 MiB installed (conservative placeholder for future clamping).
-    return max(1, int(installed_bytes // (512 * 1024 * 1024)))
+    usable = max(installed_bytes - _RAM_CAP_RESERVE_BYTES, _RAM_CAP_BYTES_PER_WORKER)
+    return max(1, int(usable // _RAM_CAP_BYTES_PER_WORKER))
 
 
 def _tile_count_for_job_cap(
@@ -93,6 +97,7 @@ def _resolve_compositing_workers(
     group_size: int,
     path_count: int,
     installed_ram_bytes: int | None,
+    apply_ram_cap: bool,
 ) -> tuple[int, int, int, int | None, int | None]:
     """Returns (jobs, cpu_cap, tile_cap, ram_cap_candidate, installed_ram_bytes)."""
     tile_n = _tile_count_for_job_cap(
@@ -104,9 +109,32 @@ def _resolve_compositing_workers(
     )
     cpu_cap = max(1, (os.cpu_count() or 2) // 2)
     tile_cap = max(1, _TILE_COMPOSITE_TILE_BUDGET // tile_n)
-    jobs = min(cpu_cap, tile_cap)
     ram_cap = _ram_cap_candidate_for_logging(installed_ram_bytes)
+    caps = [cpu_cap, tile_cap]
+    if apply_ram_cap and ram_cap is not None:
+        caps.append(ram_cap)
+    jobs = max(1, min(caps))
     return jobs, cpu_cap, tile_cap, ram_cap, installed_ram_bytes
+
+
+def _worker_limit_reason(
+    *,
+    jobs: int,
+    cpu_cap: int,
+    tile_cap: int,
+    ram_cap_candidate: int | None,
+    auto_ram_cap: bool,
+) -> str:
+    reasons: list[str] = []
+    if jobs == cpu_cap:
+        reasons.append("cpu")
+    if jobs == tile_cap:
+        reasons.append("tile")
+    if auto_ram_cap and ram_cap_candidate is not None and jobs == ram_cap_candidate:
+        reasons.append("ram")
+    if not reasons:
+        return "unknown"
+    return "+".join(reasons)
 
 
 def _compute_tile_layouts(
@@ -402,13 +430,58 @@ def _detect_screen_resolution(fallback: str, *, quiet: bool, prefer_fallback: bo
     return _parse_resolution(fallback)
 
 
-def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str) -> str:
+def _apply_large_grid_safe_resolution(
+    *,
+    screen_w: int,
+    screen_h: int,
+    cols: int,
+    rows: int,
+    resolution_explicit: bool,
+    safe_mode: str,
+    quiet: bool,
+) -> tuple[int, int]:
+    tile_count = max(cols * rows, 1)
+    safe_w, safe_h = _LARGE_GRID_SAFE_RESOLUTION
+    if resolution_explicit or safe_mode == "off":
+        return screen_w, screen_h
+    if tile_count < _LARGE_GRID_TILE_THRESHOLD:
+        return screen_w, screen_h
+    if screen_w <= safe_w and screen_h <= safe_h:
+        return screen_w, screen_h
+    if safe_mode == "warn":
+        _phase(
+            f"phase=screen msg=large_grid_recommendation grid={cols}x{rows} "
+            f"current={screen_w}x{screen_h} suggested={safe_w}x{safe_h}",
+            quiet=quiet,
+        )
+        return screen_w, screen_h
+    _phase(
+        f"phase=screen msg=auto_downscale_large_grid grid={cols}x{rows} from={screen_w}x{screen_h} to={safe_w}x{safe_h}",
+        quiet=quiet,
+    )
+    return safe_w, safe_h
+
+
+def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str, *, tile_quality: str) -> str:
+    scale_flags = {
+        "fast": "fast_bilinear",
+        "balanced": "bicubic",
+        "high": "lanczos",
+    }[tile_quality]
     if scale_mode == "fill":
-        return f"scale={cell_w}:{cell_h}:force_original_aspect_ratio=increase,crop={cell_w}:{cell_h}"
-    return f"scale={cell_w}:{cell_h}:force_original_aspect_ratio=decrease,pad={cell_w}:{cell_h}:(ow-iw)/2:(oh-ih)/2:black"
+        return (
+            f"scale={cell_w}:{cell_h}:force_original_aspect_ratio=increase:flags={scale_flags},"
+            f"crop={cell_w}:{cell_h}"
+        )
+    return (
+        f"scale={cell_w}:{cell_h}:force_original_aspect_ratio=decrease:flags={scale_flags},"
+        f"pad={cell_w}:{cell_h}:(ow-iw)/2:(oh-ih)/2:black"
+    )
 
 
-def _build_filter(*, cols: int, rows: int, screen_w: int, screen_h: int, spacing: int, scale_mode: str) -> tuple[str, int]:
+def _build_filter(
+    *, cols: int, rows: int, screen_w: int, screen_h: int, spacing: int, scale_mode: str, tile_quality: str
+) -> tuple[str, int]:
     tile_count = cols * rows
     usable_w = screen_w - spacing * (cols - 1)
     usable_h = screen_h - spacing * (rows - 1)
@@ -416,7 +489,7 @@ def _build_filter(*, cols: int, rows: int, screen_w: int, screen_h: int, spacing
         raise ValueError("spacing too large for selected grid/screen")
     cell_w = usable_w // cols
     cell_h = usable_h // rows
-    cell = _tile_cell_filter(cell_w, cell_h, scale_mode)
+    cell = _tile_cell_filter(cell_w, cell_h, scale_mode, tile_quality=tile_quality)
     parts: list[str] = []
     for i in range(tile_count):
         parts.append(f"[{i}:v]{cell}[s{i}]")
@@ -442,16 +515,40 @@ def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
 
 
 def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
+    tile_quality = str(getattr(args, "tile_quality", "balanced"))
     if not args.animate_videos:
         if out_ext == ".png":
             return ["-frames:v", "1", "-c:v", "png"]
+        quality_to_q = {"fast": "5", "balanced": "2", "high": "1"}
         # Explicit pix fmt matches filter; avoids mjpeg 'non full-range YUV' / encoder init failures.
-        return ["-frames:v", "1", "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-q:v", "2"]
-    if args.encoder == "hevc_videotoolbox":
+        return ["-frames:v", "1", "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-q:v", quality_to_q[tile_quality]]
+    x264_preset = {"fast": "veryfast", "balanced": "medium", "high": "slow"}[tile_quality]
+    x265_preset = {"fast": "fast", "balanced": "medium", "high": "slow"}[tile_quality]
+    encoder = _animated_encoder(args)
+    if encoder == "hevc_videotoolbox":
         return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "15M", "-pix_fmt", "yuv420p"]
-    if args.encoder == "libx265":
-        return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx265", "-preset", "medium", "-crf", "25", "-pix_fmt", "yuv420p"]
-    return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
+    if encoder == "libx265":
+        return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx265", "-preset", x265_preset, "-crf", "25", "-pix_fmt", "yuv420p"]
+    return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx264", "-preset", x264_preset, "-crf", "20", "-pix_fmt", "yuv420p"]
+
+
+def _animated_encoder(args: Namespace) -> str:
+    """Resolve animated encoder, optionally preferring VideoToolbox under hwaccel auto."""
+    enc = str(getattr(args, "encoder", "auto") or "auto")
+    if enc != "auto":
+        return enc
+    if str(getattr(args, "tile_hwaccel", "off")) == "auto" and sys.platform == "darwin":
+        return "hevc_videotoolbox"
+    return "libx264"
+
+
+def _ffmpeg_hwaccel_args(args: Namespace) -> list[str]:
+    """Experimental decode hwaccel toggle for animated tiles."""
+    if not bool(getattr(args, "animate_videos", False)):
+        return []
+    if str(getattr(args, "tile_hwaccel", "off")) != "auto":
+        return []
+    return ["-hwaccel", "auto"]
 
 
 def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: Namespace) -> tuple[bool, str]:
@@ -468,6 +565,7 @@ def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: 
         "-filter_complex_threads",
         "1",
     ]
+    cmd.extend(_ffmpeg_hwaccel_args(args))
     for item in inputs:
         if args.animate_videos and not _is_video(item):
             cmd.extend(["-loop", "1", "-t", str(args.duration), "-i", item])
@@ -498,6 +596,7 @@ def _composite_one_slide(
     screen_h: int,
     spacing: int,
     scale_mode: str,
+    tile_quality: str,
     args: Namespace,
 ) -> bool:
     per_slide = ccols * crows
@@ -508,6 +607,7 @@ def _composite_one_slide(
         screen_h=screen_h,
         spacing=spacing,
         scale_mode=scale_mode,
+        tile_quality=tile_quality,
     )
     inputs = [paths[min(cursor_start + i, len(paths) - 1)] for i in range(per_slide)]
     out_file = out_dir / f"{slide_idx:04d}{ext}"
@@ -603,10 +703,13 @@ def _play_mpv(files: list[str], args: Namespace, *, shuffle: bool) -> int:
 
 
 def _build_cache_key(effect: str, manifest: str, args: Namespace, screen_w: int, screen_h: int, extras: str = "") -> str:
+    resolved_encoder = _animated_encoder(args) if bool(getattr(args, "animate_videos", False)) else str(getattr(args, "encoder", "auto"))
     payload = (
         f"effect={effect}\nmanifest={manifest}\nscreen={screen_w}x{screen_h}\n"
         f"duration={args.duration}\nscale={args.scale_mode}\nspacing={args.spacing or 0}\n"
-        f"animate={args.animate_videos}\nencoder={args.encoder}\n{extras}\n"
+        f"animate={args.animate_videos}\nencoder={args.encoder}\nresolved_encoder={resolved_encoder}\n"
+        f"tile_hwaccel={getattr(args, 'tile_hwaccel', 'off')}\n"
+        f"tile_quality={getattr(args, 'tile_quality', 'balanced')}\n{extras}\n"
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -621,10 +724,20 @@ def build_tile_backend_command(args: Namespace) -> list[str]:
         return cmd
     cols, rows = _parse_grid(args.grid)
     resolution_override = bool(getattr(args, "resolution_explicit", False))
-    screen_w, screen_h = _detect_screen_resolution(
+    safe_mode = str(getattr(args, "tile_safe_mode", "auto"))
+    raw_w, raw_h = _detect_screen_resolution(
         args.resolution,
         quiet=True,
         prefer_fallback=resolution_override,
+    )
+    screen_w, screen_h = _apply_large_grid_safe_resolution(
+        screen_w=raw_w,
+        screen_h=raw_h,
+        cols=cols,
+        rows=rows,
+        resolution_explicit=resolution_override,
+        safe_mode=safe_mode,
+        quiet=True,
     )
     if len(paths) <= cols * rows and int(args.spacing or 0) == 0:
         cmd = ["mpv", f"--geometry={screen_w}x{screen_h}+0+0", "--fullscreen", f"--image-display-duration={args.duration}"]
@@ -659,18 +772,41 @@ def run_tile_live(args: Namespace) -> int:
     cols, rows = _parse_grid(args.grid)
     spacing = int(args.spacing or 0)
     resolution_override = bool(getattr(args, "resolution_explicit", False))
-    screen_w, screen_h = _detect_screen_resolution(
+    safe_mode = str(getattr(args, "tile_safe_mode", "auto"))
+    raw_w, raw_h = _detect_screen_resolution(
         args.resolution,
         quiet=bool(args.quiet),
         prefer_fallback=resolution_override,
     )
+    screen_w, screen_h = _apply_large_grid_safe_resolution(
+        screen_w=raw_w,
+        screen_h=raw_h,
+        cols=cols,
+        rows=rows,
+        resolution_explicit=resolution_override,
+        safe_mode=safe_mode,
+        quiet=bool(args.quiet),
+    )
     _phase(f"phase=screen msg=resolved size={screen_w}x{screen_h}", quiet=bool(args.quiet))
+    if bool(args.animate_videos):
+        hw_mode = str(getattr(args, "tile_hwaccel", "off"))
+        _phase(
+            f"phase=compositing-{'randomized' if bool(args.randomize) else 'fixed'} "
+            f"msg=hwaccel mode={hw_mode} encoder={_animated_encoder(args)}",
+            quiet=bool(args.quiet),
+        )
 
     do_randomize = bool(args.randomize)
     tile_count = cols * rows
     if len(paths) <= tile_count and spacing == 0 and not do_randomize and int(args.instances) == 1:
         filter_complex, n_tiles = _build_filter(
-            cols=cols, rows=rows, screen_w=screen_w, screen_h=screen_h, spacing=spacing, scale_mode=args.scale_mode
+            cols=cols,
+            rows=rows,
+            screen_w=screen_w,
+            screen_h=screen_h,
+            spacing=spacing,
+            scale_mode=args.scale_mode,
+            tile_quality=str(getattr(args, "tile_quality", "balanced")),
         )
         cmd = ["mpv", f"--geometry={screen_w}x{screen_h}+0+0", "--fullscreen", f"--image-display-duration={args.duration}", f"--lavfi-complex={filter_complex}"]
         first = True
@@ -736,13 +872,22 @@ def run_tile_live(args: Namespace) -> int:
         group_size=group_size,
         path_count=len(paths),
         installed_ram_bytes=installed_ram,
+        apply_ram_cap=bool(getattr(args, "auto_ram_cap", True)),
+    )
+    limit_reason = _worker_limit_reason(
+        jobs=jobs,
+        cpu_cap=cpu_cap,
+        tile_cap=tile_cap,
+        ram_cap_candidate=ram_cap_candidate,
+        auto_ram_cap=bool(getattr(args, "auto_ram_cap", True)),
     )
     ram_b = "unknown" if ram_bytes_for_log is None else str(ram_bytes_for_log)
     ram_c = "unknown" if ram_cap_candidate is None else str(ram_cap_candidate)
     _phase(
         f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=job_schedule "
         f"workers={jobs} cpu_cap={cpu_cap} tile_cap={tile_cap} ram_cap_candidate={ram_c} "
-        f"installed_ram_bytes={ram_b} tile_budget={_TILE_COMPOSITE_TILE_BUDGET} slides={total_slides}",
+        f"installed_ram_bytes={ram_b} auto_ram_cap={str(bool(getattr(args, 'auto_ram_cap', True))).lower()} "
+        f"limit_reason={limit_reason} tile_budget={_TILE_COMPOSITE_TILE_BUDGET} slides={total_slides}",
         quiet=bool(args.quiet),
     )
 
@@ -779,6 +924,7 @@ def run_tile_live(args: Namespace) -> int:
                 screen_h=screen_h,
                 spacing=spacing,
                 scale_mode=args.scale_mode,
+                tile_quality=str(getattr(args, "tile_quality", "balanced")),
                 args=args,
             )
 

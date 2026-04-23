@@ -1,0 +1,106 @@
+mpv-img-tricks: phase=cache msg=cleared ffprobe-tile-v1 ffprobe-tile-v2 ffprobe-tile-v3 ffprobe-tile-v4 ffprobe-tile-v5 tile-randomized tile-fixed
+[13:35:20] mpv-img-tricks: phase=discover effect=tile playlist_lines=600
+[13:35:20] mpv-img-tricks: phase=tile msg=start animate=false
+[13:35:20] mpv-img-tricks: phase=validate-media msg=ffprobe_scan total_candidates=600 parallel_jobs=5 cache_dir=/Users/coj/.cache/mpv-img-tricks/ffprobe-tile-v5
+[13:35:20] mpv-img-tricks: phase=validate-media msg=start total=600 label=ffprobe scan
+[13:35:20] mpv-img-tricks: phase=validate-media progress=1/600 pct=0 elapsed=00:00 eta=01:28 kept=1 skipped=0
+[13:35:20] mpv-img-tricks: phase=validate-media progress=30/600 pct=5 elapsed=00:00 eta=00:12 kept=30 skipped=0
+[13:35:21] mpv-img-tricks: phase=validate-media progress=60/600 pct=10 elapsed=00:01 eta=00:10 kept=60 skipped=0
+[13:35:22] mpv-img-tricks: phase=validate-media progress=90/600 pct=15 elapsed=00:01 eta=00:13 kept=90 skipped=0
+[13:35:22] mpv-img-tricks: phase=validate-media progress=120/600 pct=20 elapsed=00:02 eta=00:14 kept=120 skipped=0
+[13:35:23] mpv-img-tricks: phase=validate-media progress=150/600 pct=25 elapsed=00:03 eta=00:13 kept=150 skipped=0
+[13:35:23] mpv-img-tricks: phase=validate-media progress=180/600 pct=30 elapsed=00:03 eta=00:08 kept=180 skipped=0
+[13:35:24] mpv-img-tricks: phase=validate-media progress=210/600 pct=35 elapsed=00:04 eta=00:09 kept=210 skipped=0
+[13:35:25] mpv-img-tricks: phase=validate-media progress=240/600 pct=40 elapsed=00:05 eta=00:07 kept=240 skipped=0
+[13:35:26] mpv-img-tricks: phase=validate-media progress=270/600 pct=45 elapsed=00:05 eta=00:10 kept=270 skipped=0
+[13:35:26] mpv-img-tricks: phase=validate-media progress=300/600 pct=50 elapsed=00:06 eta=00:07 kept=300 skipped=0
+[13:35:27] mpv-img-tricks: phase=validate-media progress=330/600 pct=55 elapsed=00:06 eta=00:07 kept=330 skipped=0
+[13:35:27] mpv-img-tricks: phase=validate-media progress=360/600 pct=60 elapsed=00:07 eta=00:01 kept=360 skipped=0
+[13:35:27] mpv-img-tricks: phase=validate-media progress=390/600 pct=65 elapsed=00:07 eta=00:01 kept=390 skipped=0
+[13:35:27] mpv-img-tricks: phase=validate-media progress=420/600 pct=70 elapsed=00:07 eta=00:02 kept=420 skipped=0
+[13:35:28] mpv-img-tricks: phase=validate-media progress=450/600 pct=75 elapsed=00:08 eta=00:06 kept=450 skipped=0
+[13:35:29] mpv-img-tricks: phase=validate-media progress=480/600 pct=80 elapsed=00:09 eta=00:02 kept=480 skipped=0
+[13:35:30] mpv-img-tricks: phase=validate-media progress=510/600 pct=85 elapsed=00:09 eta=00:01 kept=510 skipped=0
+[13:35:31] mpv-img-tricks: phase=validate-media progress=540/600 pct=90 elapsed=00:10 eta=00:02 kept=540 skipped=0
+[13:35:31] mpv-img-tricks: phase=validate-media progress=570/600 pct=95 elapsed=00:11 eta=00:00 kept=570 skipped=0
+[13:35:32] mpv-img-tricks: phase=validate-media progress=600/600 pct=100 elapsed=00:12 eta=--:-- kept=600 skipped=0
+[13:35:32] mpv-img-tricks: phase=validate-media msg=complete total=600 kept=600 skipped=0 checked=600
+[13:35:32] mpv-img-tricks: phase=screen msg=using_resolution_override size=1920x1080
+[13:35:32] mpv-img-tricks: phase=screen msg=resolved size=1920x1080
+[13:35:32] mpv-img-tricks: phase=compositing-fixed msg=cache_miss key=526e1c8cba4876979c25e002754b5bd4e7dfa60049e543e1149329aba56483ce
+[13:35:32] mpv-img-tricks: phase=compositing-fixed msg=job_schedule workers=1 cpu_cap=5 tile_cap=1 ram_cap_candidate=32 installed_ram_bytes=17179869184 tile_budget=28 slides=3
+[13:35:32] mpv-img-tricks: phase=compositing-fixed msg=start total=3 label=rendering fixed composites (.jpg)
+[13:36:01] mpv-img-tricks: phase=compositing-fixed progress=1/3 pct=33 elapsed=00:29 eta=00:58 in_flight=0 images=200/600
+[13:36:21] mpv-img-tricks: phase=compositing-fixed progress=2/3 pct=66 elapsed=00:49 eta=00:26 in_flight=0 images=400/600
+[13:36:52] mpv-img-tricks: phase=compositing-fixed progress=3/3 pct=100 elapsed=01:20 eta=--:-- in_flight=0 images=600/600
+[13:36:52] mpv-img-tricks: phase=compositing-fixed msg=complete total=3 slides=3 failures=0
+[13:36:52] mpv-img-tricks: phase=compositing-fixed msg=cache_saved dir=/Users/coj/.cache/mpv-img-tricks/tile-fixed/526e1c8cba4876979c25e002754b5bd4e7dfa60049e543e1149329aba56483ce
+2026-04-23 13:36:53.746 mpv[58137:25612565] +[IMKClient subclass]: chose IMKClient_Modern
+2026-04-23 13:36:53.746 mpv[58137:25612565] +[IMKInputSession subclass]: chose IMKInputSession_Modern
+      101.85 real       115.74 user        18.23 sys
+          3775528960  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             4345776  page reclaims
+               38377  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   1  signals received
+                8268  voluntary context switches
+              464258  involuntary context switches
+         10896890287  instructions retired
+          5204454026  cycles elapsed
+            28262880  peak memory footprint
+0/image2 @ 0x126644070] Terminating thread with return code -5 (Input/output error)
+[13:35:30] mpv-img-tricks: phase=compositing-fixed progress=10/14 pct=71 elapsed=03:29 eta=01:15 in_flight=0 images=2000/2610
+[image2 @ 0x146e5f790] Could not open file : /Users/coj/.cache/mpv-img-tricks/tile-fixed/00019863e4040796aa08bb302c72ae6fe1aeea3255bcc63605c5906876e4610e/0010.jpg
+[vost#0:0/mjpeg @ 0x146e600a0] Error submitting a packet to the muxer: Input/output error
+    Last message repeated 1 times
+[out#0/image2 @ 0x146e5f6c0] Error muxing a packet
+[out#0/image2 @ 0x146e5f6c0] Task finished with error code: -5 (Input/output error)
+[out#0/image2 @ 0x146e5f6c0] Terminating thread with return code -5 (Input/output error)
+[13:35:50] mpv-img-tricks: phase=compositing-fixed progress=11/14 pct=78 elapsed=03:49 eta=00:57 in_flight=0 images=2200/2610
+[image2 @ 0x13b847eb0] Could not open file : /Users/coj/.cache/mpv-img-tricks/tile-fixed/00019863e4040796aa08bb302c72ae6fe1aeea3255bcc63605c5906876e4610e/0011.jpg
+[vost#0:0/mjpeg @ 0x13b848510] Error submitting a packet to the muxer: Input/output error
+    Last message repeated 1 times
+[out#0/image2 @ 0x13b847890] Error muxing a packet
+[out#0/image2 @ 0x13b847890] Task finished with error code: -5 (Input/output error)
+[out#0/image2 @ 0x13b847890] Terminating thread with return code -5 (Input/output error)
+[13:36:10] mpv-img-tricks: phase=compositing-fixed progress=12/14 pct=85 elapsed=04:09 eta=00:38 in_flight=0 images=2400/2610
+[image2 @ 0x141a3b800] Could not open file : /Users/coj/.cache/mpv-img-tricks/tile-fixed/00019863e4040796aa08bb302c72ae6fe1aeea3255bcc63605c5906876e4610e/0012.jpg
+[vost#0:0/mjpeg @ 0x141854800] Error submitting a packet to the muxer: Input/output error
+    Last message repeated 1 times
+[out#0/image2 @ 0x141a3b740] Error muxing a packet
+[out#0/image2 @ 0x141a3b740] Task finished with error code: -5 (Input/output error)
+[out#0/image2 @ 0x141a3b740] Terminating thread with return code -5 (Input/output error)
+[13:36:25] mpv-img-tricks: phase=compositing-fixed progress=13/14 pct=92 elapsed=04:24 eta=00:18 in_flight=0 images=2600/2610
+[image2 @ 0x13a66bdd0] Could not open file : /Users/coj/.cache/mpv-img-tricks/tile-fixed/00019863e4040796aa08bb302c72ae6fe1aeea3255bcc63605c5906876e4610e/0013.jpg
+[vost#0:0/mjpeg @ 0x13a66c660] Error submitting a packet to the muxer: Input/output error
+    Last message repeated 1 times
+[out#0/image2 @ 0x13a66bd10] Error muxing a packet
+[out#0/image2 @ 0x13a66bd10] Task finished with error code: -5 (Input/output error)
+[out#0/image2 @ 0x13a66bd10] Terminating thread with return code -5 (Input/output error)
+[13:36:39] mpv-img-tricks: phase=compositing-fixed progress=14/14 pct=100 elapsed=04:38 eta=--:-- in_flight=0 images=2610/2610
+[13:36:39] mpv-img-tricks: phase=compositing-fixed msg=complete total=14 slides=14 failures=5
+      328.54 real       392.20 user        56.99 sys
+          4840144896  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            13490449  page reclaims
+              137443  page faults
+                   0  swaps
+                 293  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+               25467  voluntary context switches
+             1498099  involuntary context switches
+         24175010358  instructions retired
+         17190946360  cycles elapsed
+            28541408  peak memory footprint

@@ -1,6 +1,13 @@
-# mpv-img-tricks — discovery doc
+# ARCHIVED: discovery snapshot (2026-03)
 
-Internal orientation for collaborators and future you. Summarizes repository layout, how the CLI maps to Bash backends, tests, and sensible next steps. **For install and day-to-day use, start with [setup.md](setup.md) and the repo [README](../README.md).** Prioritized improvement ideas: [recommendations.md](recommendations.md). **Backlog execution:** [plan.md](plan.md). **Dated implementation notes:** [dev-log/](dev-log/).
+This file is a historical snapshot and may be stale. It is retained as archival context.
+
+For current detailed architecture beyond README, use [architecture.md](architecture.md).
+For install and day-to-day use, use [setup.md](setup.md) and [README.md](../README.md).
+
+---
+
+Internal orientation for collaborators and future you at the time it was written. Summarizes repository layout, how the CLI mapped to backends, tests, and then-current next steps. Prioritized improvement ideas: [recommendations.md](recommendations.md). **Backlog execution:** [plan.md](plan.md). **Dated implementation notes:** [dev-log/](dev-log/).
 
 *Last reviewed from git and tree: 2026-03-31 (includes §12 deep dive on `img-effects.sh`, slideshow bindings policy, and unit-test inventory).*
 

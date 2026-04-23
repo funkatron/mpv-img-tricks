@@ -166,9 +166,19 @@ For `--effect tile` (and similar compositing paths), work is not silent: phases 
 1. **validate-media** — Optional `ffprobe` pass over the playlist (progress lines every 25 files for large sets).
 2. **probe-encoders** — With `--animate-videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
 3. **prepare-audio** — Optional silence trim via ffmpeg when `--sound` is set.
-4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and (for telemetry) `ram_cap_candidate` / `installed_ram_bytes` — the RAM candidate is **not** applied to limits yet. Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
+4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). With default settings, the RAM candidate now participates in worker clamping; disable via `--no-auto-ram-cap` if you need to force CPU/tile-only caps. Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
 
 If screen size detection fails (no usable `system_profiler` / `xrandr`), tile layout falls back to `--resolution`.
+
+For large grids, tile safety defaults to `--tile-safe-mode auto`: if resolution is not explicit and the detected display is larger than 1280x720, very large grids are downscaled to a safer working resolution. Use `--tile-safe-mode warn` to keep current behavior with a recommendation log, or `--tile-safe-mode off` to disable it entirely.
+
+Use `--tile-quality fast|balanced|high` to tune compositing quality/performance trade-offs:
+
+- `fast` — lower-quality JPEG and faster scaler flags.
+- `balanced` — default quality/perf compromise.
+- `high` — higher-quality scaler flags and slower encode presets.
+
+`--tile-hwaccel auto` enables an experimental hardware-acceleration path for animated tiles (`--animate-videos`) by requesting ffmpeg decode hwaccel and preferring VideoToolbox encoding on macOS when `--encoder auto` is used. In local A/B testing this mode was faster but had a slightly higher peak RSS; use `off` when minimizing memory is more important than speed. Keep `--tile-hwaccel off` (default) for the most predictable cross-platform behavior.
 
 ## Routine checks
 

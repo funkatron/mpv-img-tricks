@@ -1,0 +1,50 @@
+[16:23:14] mpv-img-tricks: phase=discover effect=tile playlist_lines=2610
+[16:23:14] mpv-img-tricks: phase=tile msg=start animate=false
+[16:23:14] mpv-img-tricks: phase=validate-media msg=ffprobe_scan total_candidates=2610 parallel_jobs=5 cache_dir=/Users/coj/.cache/mpv-img-tricks/ffprobe-tile-v5
+[16:23:14] mpv-img-tricks: phase=validate-media msg=start total=2610 label=ffprobe scan
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1/2610 pct=0 elapsed=00:00 eta=00:18 kept=1 skipped=0
+[16:23:14] mpv-img-tricks: phase=validate-media progress=131/2610 pct=5 elapsed=00:00 eta=00:00 kept=131 skipped=0
+[16:23:14] mpv-img-tricks: phase=validate-media progress=261/2610 pct=10 elapsed=00:00 eta=00:00 kept=261 skipped=0
+[16:23:14] mpv-img-tricks: phase=validate-media progress=392/2610 pct=15 elapsed=00:00 eta=00:00 kept=392 skipped=0
+[16:23:14] mpv-img-tricks: phase=validate-media progress=522/2610 pct=20 elapsed=00:00 eta=00:00 kept=522 skipped=0
+[16:23:14] mpv-img-tricks: phase=validate-media progress=653/2610 pct=25 elapsed=00:00 eta=00:00 kept=653 skipped=0
+[16:23:14] mpv-img-tricks: phase=validate-media progress=783/2610 pct=30 elapsed=00:00 eta=00:00 kept=783 skipped=0
+[16:23:14] mpv-img-tricks: phase=validate-media progress=914/2610 pct=35 elapsed=00:00 eta=00:00 kept=909 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1044/2610 pct=40 elapsed=00:00 eta=00:00 kept=1039 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1175/2610 pct=45 elapsed=00:00 eta=00:00 kept=1170 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1305/2610 pct=50 elapsed=00:00 eta=00:00 kept=1300 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1436/2610 pct=55 elapsed=00:00 eta=00:00 kept=1431 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1566/2610 pct=60 elapsed=00:00 eta=00:00 kept=1561 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1697/2610 pct=65 elapsed=00:00 eta=00:00 kept=1692 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1827/2610 pct=70 elapsed=00:00 eta=00:00 kept=1822 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=1958/2610 pct=75 elapsed=00:00 eta=00:00 kept=1953 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=2088/2610 pct=80 elapsed=00:00 eta=00:00 kept=2083 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=2219/2610 pct=85 elapsed=00:00 eta=00:00 kept=2214 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=2349/2610 pct=90 elapsed=00:00 eta=00:00 kept=2344 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=2480/2610 pct=95 elapsed=00:00 eta=00:00 kept=2475 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media progress=2610/2610 pct=100 elapsed=00:00 eta=--:-- kept=2605 skipped=5
+[16:23:14] mpv-img-tricks: phase=validate-media msg=complete total=2610 kept=2605 skipped=5 checked=2610
+[16:23:14] Skipped 5 unreadable media file(s).
+[16:23:14] mpv-img-tricks: phase=screen msg=resolved size=3440x1440
+[16:23:15] mpv-img-tricks: phase=compositing-fixed msg=cache_hit key=839ba727c391776495bbbb26636cb4b7cde14ce5eb27940bb5094fe6ef18f387
+[playlist] Reading plaintext playlist.
+2026-04-17 16:23:15.560 mpv[49405:1374512] +[IMKClient subclass]: chose IMKClient_Modern
+2026-04-17 16:23:15.560 mpv[49405:1374512] +[IMKInputSession subclass]: chose IMKInputSession_Modern
+        4.97 real         3.34 user         1.02 sys
+           215302144  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               31127  page reclaims
+                1808  page faults
+                   0  swaps
+                 274  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                6205  voluntary context switches
+               65353  involuntary context switches
+          9702406432  instructions retired
+          3496771819  cycles elapsed
+            28541456  peak memory footprint

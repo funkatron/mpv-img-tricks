@@ -23,3 +23,35 @@ def test_resolution_marked_explicit_even_when_default_value_passed() -> None:
         args.resolution = cli.DEFAULT_RESOLUTION
     assert resolution_explicit is True
     assert args.resolution == "1920x1080"
+
+
+def test_tile_perf_flags_have_expected_defaults() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["live", "fixtures/images", "--effect", "tile"])
+    assert args.tile_quality == "balanced"
+    assert args.tile_safe_mode == "auto"
+    assert args.auto_ram_cap is True
+    assert args.tile_hwaccel == "off"
+
+
+def test_tile_perf_flags_can_be_overridden() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        [
+            "live",
+            "fixtures/images",
+            "--effect",
+            "tile",
+            "--tile-quality",
+            "fast",
+            "--tile-safe-mode",
+            "off",
+            "--no-auto-ram-cap",
+            "--tile-hwaccel",
+            "auto",
+        ]
+    )
+    assert args.tile_quality == "fast"
+    assert args.tile_safe_mode == "off"
+    assert args.auto_ram_cap is False
+    assert args.tile_hwaccel == "auto"

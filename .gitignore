@@ -25,6 +25,10 @@
 *.temp
 tmp/
 
+# Local benchmark logs (root only)
+/*.log
+!docs/archived/benchmarks/**/*.log
+
 # Allow tracked fixtures even when generic media patterns exist below
 !fixtures/
 !fixtures/**/*
