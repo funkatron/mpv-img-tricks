@@ -1,0 +1,75 @@
+[16:20:26] mpv-img-tricks: phase=discover effect=tile playlist_lines=2610
+[16:20:26] mpv-img-tricks: phase=tile msg=start animate=false
+[16:20:26] mpv-img-tricks: phase=validate-media msg=ffprobe_scan total_candidates=2610 parallel_jobs=5 cache_dir=/Users/coj/.cache/mpv-img-tricks/ffprobe-tile-v5
+[16:20:26] mpv-img-tricks: phase=validate-media msg=start total=2610 label=ffprobe scan
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1/2610 pct=0 elapsed=00:00 eta=00:18 kept=1 skipped=0
+[16:20:26] mpv-img-tricks: phase=validate-media progress=131/2610 pct=5 elapsed=00:00 eta=00:00 kept=131 skipped=0
+[16:20:26] mpv-img-tricks: phase=validate-media progress=261/2610 pct=10 elapsed=00:00 eta=00:00 kept=261 skipped=0
+[16:20:26] mpv-img-tricks: phase=validate-media progress=392/2610 pct=15 elapsed=00:00 eta=00:00 kept=392 skipped=0
+[16:20:26] mpv-img-tricks: phase=validate-media progress=522/2610 pct=20 elapsed=00:00 eta=00:00 kept=522 skipped=0
+[16:20:26] mpv-img-tricks: phase=validate-media progress=653/2610 pct=25 elapsed=00:00 eta=00:00 kept=653 skipped=0
+[16:20:26] mpv-img-tricks: phase=validate-media progress=783/2610 pct=30 elapsed=00:00 eta=00:00 kept=783 skipped=0
+[16:20:26] mpv-img-tricks: phase=validate-media progress=914/2610 pct=35 elapsed=00:00 eta=00:00 kept=909 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1044/2610 pct=40 elapsed=00:00 eta=00:00 kept=1039 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1175/2610 pct=45 elapsed=00:00 eta=00:00 kept=1170 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1305/2610 pct=50 elapsed=00:00 eta=00:00 kept=1300 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1436/2610 pct=55 elapsed=00:00 eta=00:00 kept=1431 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1566/2610 pct=60 elapsed=00:00 eta=00:00 kept=1561 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1697/2610 pct=65 elapsed=00:00 eta=00:00 kept=1692 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1827/2610 pct=70 elapsed=00:00 eta=00:00 kept=1822 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=1958/2610 pct=75 elapsed=00:00 eta=00:00 kept=1953 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=2088/2610 pct=80 elapsed=00:00 eta=00:00 kept=2083 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=2219/2610 pct=85 elapsed=00:00 eta=00:00 kept=2214 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=2349/2610 pct=90 elapsed=00:00 eta=00:00 kept=2344 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=2480/2610 pct=95 elapsed=00:00 eta=00:00 kept=2475 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media progress=2610/2610 pct=100 elapsed=00:00 eta=--:-- kept=2605 skipped=5
+[16:20:26] mpv-img-tricks: phase=validate-media msg=complete total=2610 kept=2605 skipped=5 checked=2610
+[16:20:26] Skipped 5 unreadable media file(s).
+[16:20:26] mpv-img-tricks: phase=screen msg=resolved size=3440x1440
+[16:20:26] mpv-img-tricks: phase=compositing-fixed msg=cache_miss key=7a34db1cd71edddba60a4e033e9e1e7721107f648afcd587bda34c8b2a278b52
+[16:20:26] mpv-img-tricks: phase=compositing-fixed msg=job_schedule workers=5 cpu_cap=5 tile_cap=7 ram_cap_candidate=32 installed_ram_bytes=17179869184 tile_budget=28 slides=652
+[16:20:26] mpv-img-tricks: phase=compositing-fixed msg=start total=652 label=rendering fixed composites (.jpg)
+[16:20:27] mpv-img-tricks: phase=compositing-fixed progress=1/652 pct=0 elapsed=00:00 eta=07:25 in_flight=4 images=4/2605
+[16:20:31] mpv-img-tricks: phase=compositing-fixed progress=33/652 pct=5 elapsed=00:04 eta=01:16 in_flight=4 images=132/2605
+[16:20:36] mpv-img-tricks: phase=compositing-fixed progress=66/652 pct=10 elapsed=00:09 eta=01:49 in_flight=4 images=264/2605
+[16:20:38] mpv-img-tricks: phase=compositing-fixed progress=98/652 pct=15 elapsed=00:11 eta=00:23 in_flight=4 images=392/2605
+[16:20:42] mpv-img-tricks: phase=compositing-fixed progress=131/652 pct=20 elapsed=00:15 eta=01:42 in_flight=4 images=524/2605
+[16:20:46] mpv-img-tricks: phase=compositing-fixed progress=163/652 pct=25 elapsed=00:19 eta=00:41 in_flight=4 images=652/2605
+[16:20:48] mpv-img-tricks: phase=compositing-fixed progress=196/652 pct=30 elapsed=00:21 eta=00:26 in_flight=4 images=784/2605
+[16:20:52] mpv-img-tricks: phase=compositing-fixed progress=229/652 pct=35 elapsed=00:25 eta=00:49 in_flight=4 images=916/2605
+[16:20:56] mpv-img-tricks: phase=compositing-fixed progress=261/652 pct=40 elapsed=00:29 eta=00:42 in_flight=4 images=1044/2605
+[16:20:59] mpv-img-tricks: phase=compositing-fixed progress=294/652 pct=45 elapsed=00:32 eta=00:33 in_flight=4 images=1176/2605
+[16:21:02] mpv-img-tricks: phase=compositing-fixed progress=326/652 pct=50 elapsed=00:35 eta=00:34 in_flight=4 images=1304/2605
+[16:21:05] mpv-img-tricks: phase=compositing-fixed progress=359/652 pct=55 elapsed=00:38 eta=00:19 in_flight=4 images=1436/2605
+[16:21:06] mpv-img-tricks: phase=compositing-fixed progress=392/652 pct=60 elapsed=00:40 eta=00:06 in_flight=4 images=1568/2605
+[16:21:09] mpv-img-tricks: phase=compositing-fixed progress=424/652 pct=65 elapsed=00:43 eta=00:24 in_flight=4 images=1696/2605
+[16:21:12] mpv-img-tricks: phase=compositing-fixed progress=457/652 pct=70 elapsed=00:45 eta=00:15 in_flight=4 images=1828/2605
+[16:21:15] mpv-img-tricks: phase=compositing-fixed progress=489/652 pct=75 elapsed=00:48 eta=00:14 in_flight=4 images=1956/2605
+[16:21:18] mpv-img-tricks: phase=compositing-fixed progress=522/652 pct=80 elapsed=00:51 eta=00:11 in_flight=4 images=2088/2605
+[16:21:21] mpv-img-tricks: phase=compositing-fixed progress=555/652 pct=85 elapsed=00:54 eta=00:06 in_flight=4 images=2220/2605
+[16:21:24] mpv-img-tricks: phase=compositing-fixed progress=587/652 pct=90 elapsed=00:57 eta=00:08 in_flight=4 images=2348/2605
+[16:21:26] mpv-img-tricks: phase=compositing-fixed progress=620/652 pct=95 elapsed=00:59 eta=00:02 in_flight=4 images=2480/2605
+[16:21:29] mpv-img-tricks: phase=compositing-fixed progress=652/652 pct=100 elapsed=01:02 eta=--:-- in_flight=0 images=2605/2605
+[16:21:29] mpv-img-tricks: phase=compositing-fixed msg=complete total=652 slides=652 failures=0
+[16:21:29] mpv-img-tricks: phase=compositing-fixed msg=cache_saved dir=/Users/coj/.cache/mpv-img-tricks/tile-fixed/7a34db1cd71edddba60a4e033e9e1e7721107f648afcd587bda34c8b2a278b52
+[playlist] Reading plaintext playlist.
+2026-04-17 16:21:30.201 mpv[46476:1326974] +[IMKClient subclass]: chose IMKClient_Modern
+2026-04-17 16:21:30.201 mpv[46476:1326974] +[IMKInputSession subclass]: chose IMKInputSession_Modern
+       73.25 real       281.56 user        26.00 sys
+           324403200  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             6666950  page reclaims
+               65404  page faults
+                   0  swaps
+                 308  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+               15308  voluntary context switches
+             1076573  involuntary context switches
+         13027584295  instructions retired
+          6390779838  cycles elapsed
+            27804176  peak memory footprint
