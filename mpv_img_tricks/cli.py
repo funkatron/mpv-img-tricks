@@ -19,6 +19,7 @@ from mpv_img_tricks.pipelines.live import format_live_dry_run
 
 LIVE_EFFECTS = frozenset({"basic", "tile"})
 LIVE_EFFECT_CHOICES = sorted(LIVE_EFFECTS)
+DEFAULT_RESOLUTION = "1920x1080"
 
 # ``main`` prepends DEFAULT_SUBCOMMAND when the first argv token is not a known subcommand
 # (e.g. ``slideshow ~/pics`` → ``slideshow live ~/pics``). Register every subparser name in
@@ -84,7 +85,8 @@ def add_live_only_args(parser: argparse.ArgumentParser) -> None:
 def add_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--render", action="store_true", help="Render to a video instead of live playback")
     parser.add_argument("--output", help="Output file path for render mode")
-    parser.add_argument("--resolution", default="1920x1080", help="Output resolution")
+    # Keep `None` when omitted so runtime can distinguish defaulted vs explicit CLI value.
+    parser.add_argument("--resolution", default=None, help="Output resolution")
     parser.add_argument(
         "--img-per-sec",
         default="60",
@@ -319,6 +321,9 @@ def main() -> int:
     if argv and argv[0] not in SUBCOMMAND_NAMES:
         argv = [DEFAULT_SUBCOMMAND, *argv]
     args = parser.parse_args(argv)
+    args.resolution_explicit = args.resolution is not None
+    if args.resolution is None:
+        args.resolution = DEFAULT_RESOLUTION
     return args.handler(args, args.parser)
 
 

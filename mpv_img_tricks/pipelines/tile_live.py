@@ -620,7 +620,7 @@ def build_tile_backend_command(args: Namespace) -> list[str]:
             cmd.append("--clear-cache")
         return cmd
     cols, rows = _parse_grid(args.grid)
-    resolution_override = bool(args.resolution and args.resolution != "1920x1080")
+    resolution_override = bool(getattr(args, "resolution_explicit", False))
     screen_w, screen_h = _detect_screen_resolution(
         args.resolution,
         quiet=True,
@@ -658,7 +658,7 @@ def run_tile_live(args: Namespace) -> int:
 
     cols, rows = _parse_grid(args.grid)
     spacing = int(args.spacing or 0)
-    resolution_override = bool(args.resolution and args.resolution != "1920x1080")
+    resolution_override = bool(getattr(args, "resolution_explicit", False))
     screen_w, screen_h = _detect_screen_resolution(
         args.resolution,
         quiet=bool(args.quiet),
