@@ -34,15 +34,13 @@ def test_discover_recursive_finds_subdir_images() -> None:
         assert Path(out[0]).name == "z.png"
 
 
-def test_discover_includes_videos_only_when_asked() -> None:
+def test_discover_ignores_videos() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         (d / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         (d / "b.mov").write_bytes(b"not-a-real-mov")
-        no_vid = discover_sources_to_playlist([str(d)], order="natural", recursive=False, include_video=False)
-        assert len(no_vid) == 1
-        with_vid = discover_sources_to_playlist([str(d)], order="natural", recursive=False, include_video=True)
-        assert {Path(p).name for p in with_vid} == {"a.png", "b.mov"}
+        out = discover_sources_to_playlist([str(d)], order="natural", recursive=False)
+        assert [Path(p).name for p in out] == ["a.png"]
 
 
 def test_discover_oldest_first_order_uses_mtime() -> None:

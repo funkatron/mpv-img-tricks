@@ -145,7 +145,7 @@ def test_dry_run_fit_shows_panscan_zero(
     assert "panscan=0.0" in capsys.readouterr().out
 
 
-def test_dry_run_tile_dry_run_includes_clear_cache_and_effects(
+def test_dry_run_tile_dry_run_includes_effect_flags(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     d = tmp_path / "d"
@@ -170,10 +170,8 @@ def test_dry_run_tile_dry_run_includes_clear_cache_and_effects(
     ):
         assert main() == 0
     out = capsys.readouterr().out
-    assert "--clear-cache" in out
-    assert "slideshow" in out
-    assert "live" in out
-    assert "tile" in out
+    assert "mpv" in out
+    assert "--image-display-duration=0.01" in out
 
 
 def test_dry_run_plain_render_line(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:

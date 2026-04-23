@@ -41,6 +41,8 @@ def test_mpv_root_valid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     (root / "pyproject.toml").write_text('[project]\nname = "x"\n', encoding="utf-8")
     (root / "mpv_img_tricks").mkdir()
     (root / "mpv_img_tricks" / "__init__.py").write_text("x=1\n", encoding="utf-8")
+    (root / "scripts").mkdir()
+    (root / "scripts" / "slideshow.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     monkeypatch.setenv("MPV_IMG_TRICKS_ROOT", str(root))
     assert get_repo_root() == root
     monkeypatch.delenv("MPV_IMG_TRICKS_ROOT", raising=False)

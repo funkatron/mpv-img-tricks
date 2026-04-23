@@ -34,7 +34,6 @@ def test_tile_live_2x2_randomize_reaches_phases(
             "--grid",
             "2x2",
             "--randomize",
-            "--no-cache",
             "--duration",
             "0.01",
         ],
@@ -83,10 +82,6 @@ def test_tile_live_2x1_fixed_grid_lavfi_mpv(
     assert "phase=discover" in s
     assert "phase=validate-media" in s
     assert "phase=tile" in s
-
-    stdout = capsys.readouterr().out
-    assert "lavfi:" in stdout
-    assert "xstack" in stdout
 
     log = stub_bin_dir.parent / "tool.log"
     out = log.read_text(encoding="utf-8", errors="replace")
