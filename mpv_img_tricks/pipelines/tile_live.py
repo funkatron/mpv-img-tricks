@@ -703,10 +703,12 @@ def _play_mpv(files: list[str], args: Namespace, *, shuffle: bool) -> int:
 
 
 def _build_cache_key(effect: str, manifest: str, args: Namespace, screen_w: int, screen_h: int, extras: str = "") -> str:
+    resolved_encoder = _animated_encoder(args) if bool(getattr(args, "animate_videos", False)) else str(getattr(args, "encoder", "auto"))
     payload = (
         f"effect={effect}\nmanifest={manifest}\nscreen={screen_w}x{screen_h}\n"
         f"duration={args.duration}\nscale={args.scale_mode}\nspacing={args.spacing or 0}\n"
-        f"animate={args.animate_videos}\nencoder={args.encoder}\n"
+        f"animate={args.animate_videos}\nencoder={args.encoder}\nresolved_encoder={resolved_encoder}\n"
+        f"tile_hwaccel={getattr(args, 'tile_hwaccel', 'off')}\n"
         f"tile_quality={getattr(args, 'tile_quality', 'balanced')}\n{extras}\n"
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

@@ -165,3 +165,30 @@ def test_ffmpeg_hwaccel_args_only_for_animated_auto_mode() -> None:
     assert tl._ffmpeg_hwaccel_args(Namespace(animate_videos=False, tile_hwaccel="auto")) == []
     assert tl._ffmpeg_hwaccel_args(Namespace(animate_videos=True, tile_hwaccel="off")) == []
     assert tl._ffmpeg_hwaccel_args(Namespace(animate_videos=True, tile_hwaccel="auto")) == ["-hwaccel", "auto"]
+
+
+def test_cache_key_changes_with_tile_hwaccel_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tl.sys, "platform", "darwin")
+    base = dict(
+        duration="1.0",
+        scale_mode="fit",
+        spacing="0",
+        animate_videos=True,
+        encoder="auto",
+        tile_quality="balanced",
+    )
+    key_off = tl._build_cache_key(
+        "tile-fixed",
+        "manifest-x",
+        Namespace(**base, tile_hwaccel="off"),
+        1280,
+        720,
+    )
+    key_auto = tl._build_cache_key(
+        "tile-fixed",
+        "manifest-x",
+        Namespace(**base, tile_hwaccel="auto"),
+        1280,
+        720,
+    )
+    assert key_off != key_auto
