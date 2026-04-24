@@ -575,7 +575,7 @@ def _apply_large_grid_safe_resolution(
 
 _TILE_MOTION_TEMPORAL = frozenset({"ken-burns", "axis-alt"})
 # Scales pan extent and zoom ramp for all tile zoompan motion (Ken Burns + axis-alt).
-_TILE_MOTION_SPEED = 0.5
+_TILE_MOTION_SPEED = 1.0
 # zoompan output fps; still-motion tile MP4 encode uses the same -r (see _ffmpeg_codec_args).
 _TILE_MOTION_ZOOMPAN_FPS = 60
 
@@ -608,7 +608,7 @@ def _zoompan_linear_pan(
 
     If ``fixed_zoom`` is True, ``z`` is constant so pan is a straight line at
     steady zoom. If False, ``z`` ramps with ``on`` (Ken Burns–style coupling of
-    pan and zoom). Pan extent and zoom delta are scaled by ``_TILE_MOTION_SPEED``.
+    pan and zoom). Pan extent and zoom delta are scaled by ``_TILE_MOTION_SPEED`` (default 1.0).
     """
     fps = _TILE_MOTION_ZOOMPAN_FPS
     d = max(2, int(max(float(duration), 1e-6) * fps))
