@@ -125,3 +125,37 @@ def test_tile_live_ken_burns_uses_temporal_ffmpeg(
     assert "ffmpeg" in t
     assert "zoompan=" in t
     assert "-loop" in t
+
+
+def test_tile_live_axis_alt_uses_temporal_ffmpeg(
+    two_image_dir,
+    repo_root,
+    stub_bin_dir,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(repo_root)
+    buf = StringIO()
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "slideshow",
+            "live",
+            str(two_image_dir),
+            "--effect",
+            "tile",
+            "--grid",
+            "2x2",
+            "--randomize",
+            "--tile-motion",
+            "axis-alt",
+            "--duration",
+            "0.01",
+        ],
+    ), redirect_stderr(buf):
+        rc = main()
+    assert rc == 0
+    log = stub_bin_dir.parent / "tool.log"
+    t = log.read_text(encoding="utf-8", errors="replace")
+    assert "ffmpeg" in t
+    assert "zoompan=" in t

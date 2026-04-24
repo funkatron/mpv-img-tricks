@@ -37,7 +37,7 @@ def test_validate_render_with_effect() -> None:
     assert ex.value.code == 2
 
 
-def test_validate_tile_parallax_requires_ken_burns() -> None:
+def test_validate_tile_parallax_requires_motion_mode() -> None:
     p = build_parser()
     args = p.parse_args(
         [
@@ -52,6 +52,23 @@ def test_validate_tile_parallax_requires_ken_burns() -> None:
     with pytest.raises(SystemExit) as ex:
         validate_live_args(args, p)
     assert ex.value.code == 2
+
+
+def test_validate_tile_parallax_auto_allowed_with_axis_alt() -> None:
+    p = build_parser()
+    args = p.parse_args(
+        [
+            "live",
+            "d",
+            "--effect",
+            "tile",
+            "--tile-motion",
+            "axis-alt",
+            "--tile-parallax",
+            "auto",
+        ]
+    )
+    validate_live_args(args, p)
 
 
 def test_validate_tile_motion_strength_positive() -> None:

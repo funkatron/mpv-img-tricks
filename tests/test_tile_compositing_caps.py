@@ -225,8 +225,16 @@ def test_cache_key_changes_with_tile_motion_settings() -> None:
         1280,
         720,
     )
+    key_axis = tl._build_cache_key(
+        "tile-fixed",
+        "manifest-x",
+        Namespace(**base, tile_motion="axis-alt", tile_parallax="off", tile_motion_strength=1.0),
+        1280,
+        720,
+    )
     assert key_off != key_kb
     assert key_kb != key_par
+    assert key_kb != key_axis
 
 
 def test_build_filter_ken_burns_includes_zoompan() -> None:
@@ -283,3 +291,32 @@ def test_build_filter_parallax_changes_zoompan_between_tiles() -> None:
     segs = [s for s in filt1.split(";") if "zoompan=" in s]
     assert len(segs) >= 2
     assert segs[0] != segs[1]
+
+
+def test_build_filter_axis_alt_even_col_horizontal_dominant() -> None:
+    import re
+
+    filt, n = tl._build_filter(
+        cols=2,
+        rows=1,
+        screen_w=640,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-alt",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    assert n == 2
+    assert "zoompan=" in filt
+    z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
+    z1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
+    mx0 = float(re.search(r"x='\(iw-iw/zoom\)\*on/\d+\*([0-9.-]+)'", z0).group(1))
+    my0 = float(re.search(r"y='\(ih-ih/zoom\)\*on/\d+\*([0-9.-]+)'", z0).group(1))
+    mx1 = float(re.search(r"x='\(iw-iw/zoom\)\*on/\d+\*([0-9.-]+)'", z1).group(1))
+    my1 = float(re.search(r"y='\(ih-ih/zoom\)\*on/\d+\*([0-9.-]+)'", z1).group(1))
+    # Col 0 even: |px| > |py|; col 1 odd: |py| > |px|
+    assert abs(mx0) > abs(my0)
+    assert abs(my1) > abs(mx1)

@@ -161,15 +161,18 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--tile-motion",
-        choices=["off", "ken-burns"],
+        choices=["off", "ken-burns", "axis-alt"],
         default="off",
-        help="Per-tile slow pan/zoom (Ken Burns) during compositing; uses short MP4 slides when not --animate-videos (default: off)",
+        help=(
+            "Per-tile motion during compositing; uses short MP4 slides when not --animate-videos (default: off). "
+            "ken-burns: pan+zoom; axis-alt: even columns drift mostly horizontally, odd columns mostly vertically."
+        ),
     )
     parser.add_argument(
         "--tile-parallax",
         choices=["off", "auto"],
         default="off",
-        help="With --tile-motion ken-burns, vary pan direction/speed per tile index (deterministic; default: off)",
+        help="With tile motion, vary pan sign per tile (deterministic; default: off); requires ken-burns or axis-alt",
     )
     parser.add_argument(
         "--tile-motion-strength",
@@ -264,8 +267,9 @@ def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None
         parser.error("choose either --master-control or --no-master-control")
 
     if getattr(args, "effect", None) == "tile":
-        if getattr(args, "tile_parallax", "off") == "auto" and getattr(args, "tile_motion", "off") != "ken-burns":
-            parser.error("--tile-parallax auto requires --tile-motion ken-burns")
+        tm = getattr(args, "tile_motion", "off")
+        if getattr(args, "tile_parallax", "off") == "auto" and tm not in ("ken-burns", "axis-alt"):
+            parser.error("--tile-parallax auto requires --tile-motion ken-burns or axis-alt")
 
     if getattr(args, "tile_motion_strength", 1.0) <= 0:
         parser.error("--tile-motion-strength must be positive")

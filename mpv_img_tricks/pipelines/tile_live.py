@@ -462,13 +462,44 @@ def _apply_large_grid_safe_resolution(
     return safe_w, safe_h
 
 
-def _tile_motion_is_ken_burns(args: Namespace) -> bool:
-    return str(getattr(args, "tile_motion", "off")) == "ken-burns"
+_TILE_MOTION_TEMPORAL = frozenset({"ken-burns", "axis-alt"})
+
+
+def _tile_motion_mode(args: Namespace) -> str:
+    return str(getattr(args, "tile_motion", "off"))
+
+
+def _tile_motion_needs_temporal_slides(args: Namespace) -> bool:
+    """Still-image motion modes need looped input + short MP4 per slide."""
+    return _tile_motion_mode(args) in _TILE_MOTION_TEMPORAL
 
 
 def _tile_slide_outputs_mp4(args: Namespace) -> bool:
-    """Ken Burns needs a temporal encode; still JPEG cannot hold motion."""
-    return bool(args.animate_videos) or _tile_motion_is_ken_burns(args)
+    """Temporal tile motion (or animated tiles) needs video slide files, not single-frame JPEG."""
+    return bool(args.animate_videos) or _tile_motion_needs_temporal_slides(args)
+
+
+def _zoompan_linear_pan(
+    cell_w: int,
+    cell_h: int,
+    *,
+    duration: float,
+    strength: float,
+    px: float,
+    py: float,
+) -> str:
+    """Smooth zoom + linear pan using output frame index ``on`` (zoompan)."""
+    fps = 60
+    d = max(2, int(max(float(duration), 1e-6) * fps))
+    dm1 = max(d - 1, 1)
+    strength = max(float(strength), 0.05)
+    z_delta = min(0.06 + 0.12 * strength, 0.28)
+    px = max(-1.0, min(1.0, float(px)))
+    py = max(-1.0, min(1.0, float(py)))
+    z_expr = f"1+{z_delta:.6f}*on/{dm1}"
+    x_expr = f"(iw-iw/zoom)*on/{dm1}*{px:.6f}"
+    y_expr = f"(ih-ih/zoom)*on/{dm1}*{py:.6f}"
+    return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={d}:s={cell_w}x{cell_h}:fps={fps}"
 
 
 def _zoompan_ken_burns(
@@ -480,30 +511,43 @@ def _zoompan_ken_burns(
     strength: float,
     parallax: str,
 ) -> str:
-    """Return a zoompan filter chain segment (no leading label).
-
-    Motion is driven by output frame index ``on`` (linear in time) so zoom and
-    pan stay smooth. A higher output fps gives shorter steps between frames
-    than 30 fps for the same wall-clock duration.
-    """
-    fps = 60
-    d = max(2, int(max(float(duration), 1e-6) * fps))
-    dm1 = max(d - 1, 1)
-    strength = max(float(strength), 0.05)
-    # Total zoom delta from first to last frame (was ~0.006 at strength 1 — invisible).
-    z_delta = min(0.06 + 0.12 * strength, 0.28)
+    """Ken Burns–style combined pan + zoom (per-tile variation when parallax is auto)."""
     if parallax == "auto":
         px = (1.0 if (tile_index % 2) == 0 else -1.0) * (0.82 + 0.04 * (tile_index % 5))
         py = (-1.0 if ((tile_index // 2) % 2) == 0 else 1.0) * (0.48 + 0.04 * ((tile_index + 1) % 5))
     else:
         px = 0.88
         py = 0.38
-    px = max(-1.0, min(1.0, px))
-    py = max(-1.0, min(1.0, py))
-    z_expr = f"1+{z_delta:.6f}*on/{dm1}"
-    x_expr = f"(iw-iw/zoom)*on/{dm1}*{px:.6f}"
-    y_expr = f"(ih-ih/zoom)*on/{dm1}*{py:.6f}"
-    return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={d}:s={cell_w}x{cell_h}:fps={fps}"
+    return _zoompan_linear_pan(cell_w, cell_h, duration=duration, strength=strength, px=px, py=py)
+
+
+def _zoompan_axis_alt(
+    cell_w: int,
+    cell_h: int,
+    tile_index: int,
+    cols: int,
+    *,
+    duration: float,
+    strength: float,
+    parallax: str,
+) -> str:
+    """Alternate dominant pan axis by column: even col → mostly X, odd col → mostly Y."""
+    col = tile_index % max(cols, 1)
+    row = tile_index // max(cols, 1)
+    cross = 0.14 + 0.02 * (row % 3)
+    main = 0.88 + 0.02 * (col % 3)
+    if (col % 2) == 0:
+        px_base, py_base = main, cross
+    else:
+        px_base, py_base = cross, main
+    if parallax == "auto":
+        sx = 1.0 if (tile_index % 2) == 0 else -1.0
+        sy = 1.0 if (row % 2) == 0 else -1.0
+        px = px_base * sx
+        py = py_base * sy
+    else:
+        px, py = px_base, py_base
+    return _zoompan_linear_pan(cell_w, cell_h, duration=duration, strength=strength, px=px, py=py)
 
 
 def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str, *, tile_quality: str) -> str:
@@ -546,26 +590,37 @@ def _build_filter(
     cell_h = usable_h // rows
     cell = _tile_cell_filter(cell_w, cell_h, scale_mode, tile_quality=tile_quality)
     parts: list[str] = []
-    motion_kb = tile_motion == "ken-burns"
+    motion_active = tile_motion in _TILE_MOTION_TEMPORAL
     for i in range(tile_count):
-        if motion_kb:
-            zp = _zoompan_ken_burns(
-                cell_w,
-                cell_h,
-                i,
-                duration=float(duration),
-                strength=float(tile_motion_strength),
-                parallax=str(tile_parallax),
-            )
+        if motion_active:
+            if tile_motion == "ken-burns":
+                zp = _zoompan_ken_burns(
+                    cell_w,
+                    cell_h,
+                    i,
+                    duration=float(duration),
+                    strength=float(tile_motion_strength),
+                    parallax=str(tile_parallax),
+                )
+            else:
+                zp = _zoompan_axis_alt(
+                    cell_w,
+                    cell_h,
+                    i,
+                    cols,
+                    duration=float(duration),
+                    strength=float(tile_motion_strength),
+                    parallax=str(tile_parallax),
+                )
             parts.append(f"[{i}:v]{cell},{zp}[m{i}]")
         else:
             parts.append(f"[{i}:v]{cell}[s{i}]")
-    stack_inputs = "".join(f"[{'m' if motion_kb else 's'}{i}]" for i in range(tile_count))
+    stack_inputs = "".join(f"[{'m' if motion_active else 's'}{i}]" for i in range(tile_count))
     layout = "|".join(
         f"{(i % cols) * (cell_w + spacing)}_{(i // cols) * (cell_h + spacing)}" for i in range(tile_count)
     )
     if tile_count == 1:
-        src0 = "m0" if motion_kb else "s0"
+        src0 = "m0" if motion_active else "s0"
         parts.append(f"[{src0}]copy[grid];[grid]pad={screen_w}:{screen_h}:(ow-iw)/2:(oh-ih)/2:black[out]")
     else:
         parts.append(
@@ -584,7 +639,7 @@ def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
 
 def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     tile_quality = str(getattr(args, "tile_quality", "balanced"))
-    motion_mp4 = _tile_motion_is_ken_burns(args) and out_ext.lower() == ".mp4"
+    motion_mp4 = _tile_motion_needs_temporal_slides(args) and out_ext.lower() == ".mp4"
     if not args.animate_videos and not motion_mp4:
         if out_ext == ".png":
             return ["-frames:v", "1", "-c:v", "png"]
@@ -635,7 +690,7 @@ def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: 
         "1",
     ]
     cmd.extend(_ffmpeg_hwaccel_args(args))
-    temporal_stills = bool(args.animate_videos) or _tile_motion_is_ken_burns(args)
+    temporal_stills = bool(args.animate_videos) or _tile_motion_needs_temporal_slides(args)
     for item in inputs:
         if temporal_stills and not _is_video(item):
             cmd.extend(["-loop", "1", "-t", str(args.duration), "-i", item])

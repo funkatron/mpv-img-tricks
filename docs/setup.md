@@ -119,7 +119,7 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 | Mode | Meaning of `--duration` |
 |------|-------------------------|
 | **basic** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
-| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate-videos`**) or **Ken Burns** tile motion (**`--tile-motion ken-burns`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
+| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate-videos`**) or **temporal tile motion** (**`--tile-motion ken-burns`** or **`axis-alt`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
 
 ### Plain render (`--render` without `--effect`)
 
@@ -180,16 +180,22 @@ Use `--tile-quality fast|balanced|high` to tune compositing quality/performance 
 
 `--tile-hwaccel auto` enables an experimental hardware-acceleration path for animated tiles (`--animate-videos`) by requesting ffmpeg decode hwaccel and preferring VideoToolbox encoding on macOS when `--encoder auto` is used. In local A/B testing this mode was faster but had a slightly higher peak RSS; use `off` when minimizing memory is more important than speed. Keep `--tile-hwaccel off` (default) for the most predictable cross-platform behavior.
 
-### Tile motion (Ken Burns)
+### Tile motion (Ken Burns and axis-alt)
 
-- **`--tile-motion off|ken-burns`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking. Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
-- **`--tile-parallax off|auto`** (default **`off`**): with Ken Burns, vary pan direction and intensity **per tile index** in a deterministic way. **`--tile-parallax auto` requires `--tile-motion ken-burns`**.
+- **`--tile-motion off|ken-burns|axis-alt`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking. **`ken-burns`** combines diagonal-style drift (with optional **`--tile-parallax auto`** variation). **`axis-alt`** alternates the **dominant pan axis by column**: even columns drift mostly **horizontally**, odd columns mostly **vertically** (small cross-axis drift so the cell is not frozen). Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
+- **`--tile-parallax off|auto`** (default **`off`**): flip / vary pan direction in a deterministic way. **`--tile-parallax auto` requires `--tile-motion ken-burns` or `axis-alt`**.
 - **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`2.0`** for tuning. Motion is rendered at **60 fps** inside each slide clip; longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
 
 Example:
 
 ```bash
 uv run slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
+```
+
+Column-alternating drift:
+
+```bash
+uv run slideshow live ~/pics --effect tile --grid 3x3 --tile-motion axis-alt --tile-parallax auto --duration 4
 ```
 
 ## Routine checks

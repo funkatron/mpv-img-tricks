@@ -84,3 +84,11 @@ def test_tile_motion_flags_can_be_overridden() -> None:
     assert args.tile_motion == "ken-burns"
     assert args.tile_parallax == "auto"
     assert args.tile_motion_strength == 0.75
+
+
+def test_tile_motion_axis_alt_parse() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        ["live", "fixtures/images", "--effect", "tile", "--tile-motion", "axis-alt"]
+    )
+    assert args.tile_motion == "axis-alt"
