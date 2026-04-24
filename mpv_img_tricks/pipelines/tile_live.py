@@ -487,16 +487,26 @@ def _zoompan_linear_pan(
     strength: float,
     px: float,
     py: float,
+    fixed_zoom: bool = False,
 ) -> str:
-    """Smooth zoom + linear pan using output frame index ``on`` (zoompan)."""
+    """Pan using output frame index ``on`` (linear in time).
+
+    If ``fixed_zoom`` is True, ``z`` is constant so pan is a straight line at
+    steady zoom. If False, ``z`` ramps with ``on`` (Ken Burns–style coupling of
+    pan and zoom).
+    """
     fps = 60
     d = max(2, int(max(float(duration), 1e-6) * fps))
     dm1 = max(d - 1, 1)
     strength = max(float(strength), 0.05)
-    z_delta = min(0.06 + 0.12 * strength, 0.28)
     px = max(-1.0, min(1.0, float(px)))
     py = max(-1.0, min(1.0, float(py)))
-    z_expr = f"1+{z_delta:.6f}*on/{dm1}"
+    if fixed_zoom:
+        z_fix = min(1.04 + 0.07 * strength, 1.16)
+        z_expr = f"{z_fix:.4f}"
+    else:
+        z_delta = min(0.06 + 0.12 * strength, 0.28)
+        z_expr = f"1+{z_delta:.6f}*on/{dm1}"
     x_expr = f"(iw-iw/zoom)*on/{dm1}*{px:.6f}"
     y_expr = f"(ih-ih/zoom)*on/{dm1}*{py:.6f}"
     return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={d}:s={cell_w}x{cell_h}:fps={fps}"
@@ -531,23 +541,34 @@ def _zoompan_axis_alt(
     strength: float,
     parallax: str,
 ) -> str:
-    """Alternate dominant pan axis by column: even col → mostly X, odd col → mostly Y."""
+    """Alternate pan axis by column: even col → X only, odd col → Y only (no cross-axis drift)."""
     col = tile_index % max(cols, 1)
     row = tile_index // max(cols, 1)
-    cross = 0.14 + 0.02 * (row % 3)
     main = 0.88 + 0.02 * (col % 3)
     if (col % 2) == 0:
-        px_base, py_base = main, cross
+        px_base, py_base = main, 0.0
     else:
-        px_base, py_base = cross, main
+        px_base, py_base = 0.0, main
     if parallax == "auto":
-        sx = 1.0 if (tile_index % 2) == 0 else -1.0
-        sy = 1.0 if (row % 2) == 0 else -1.0
-        px = px_base * sx
-        py = py_base * sy
+        if (col % 2) == 0:
+            sx = 1.0 if (tile_index % 2) == 0 else -1.0
+            px = px_base * sx
+            py = 0.0
+        else:
+            sy = 1.0 if (row % 2) == 0 else -1.0
+            px = 0.0
+            py = py_base * sy
     else:
         px, py = px_base, py_base
-    return _zoompan_linear_pan(cell_w, cell_h, duration=duration, strength=strength, px=px, py=py)
+    return _zoompan_linear_pan(
+        cell_w,
+        cell_h,
+        duration=duration,
+        strength=strength,
+        px=px,
+        py=py,
+        fixed_zoom=True,
+    )
 
 
 def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str, *, tile_quality: str) -> str:

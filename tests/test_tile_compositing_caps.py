@@ -317,6 +317,10 @@ def test_build_filter_axis_alt_even_col_horizontal_dominant() -> None:
     my0 = float(re.search(r"y='\(ih-ih/zoom\)\*on/\d+\*([0-9.-]+)'", z0).group(1))
     mx1 = float(re.search(r"x='\(iw-iw/zoom\)\*on/\d+\*([0-9.-]+)'", z1).group(1))
     my1 = float(re.search(r"y='\(ih-ih/zoom\)\*on/\d+\*([0-9.-]+)'", z1).group(1))
-    # Col 0 even: |px| > |py|; col 1 odd: |py| > |px|
-    assert abs(mx0) > abs(my0)
-    assert abs(my1) > abs(mx1)
+    # Col 0 even: X only; col 1 odd: Y only; constant zoom (no `on` in z expr).
+    assert abs(mx0) > 0.2
+    assert abs(my0) < 1e-9
+    assert abs(mx1) < 1e-9
+    assert abs(my1) > 0.2
+    z0z = re.search(r"zoompan=z='([^']+)'", z0).group(1)
+    assert "on" not in z0z
