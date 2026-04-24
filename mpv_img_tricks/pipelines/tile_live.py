@@ -574,6 +574,8 @@ def _apply_large_grid_safe_resolution(
 
 
 _TILE_MOTION_TEMPORAL = frozenset({"ken-burns", "axis-alt"})
+# Scales pan extent and zoom ramp for all tile zoompan motion (Ken Burns + axis-alt).
+_TILE_MOTION_SPEED = 0.5
 
 
 def _tile_motion_mode(args: Namespace) -> str:
@@ -604,19 +606,20 @@ def _zoompan_linear_pan(
 
     If ``fixed_zoom`` is True, ``z`` is constant so pan is a straight line at
     steady zoom. If False, ``z`` ramps with ``on`` (Ken Burns–style coupling of
-    pan and zoom).
+    pan and zoom). Pan extent and zoom delta are scaled by ``_TILE_MOTION_SPEED``.
     """
     fps = 60
     d = max(2, int(max(float(duration), 1e-6) * fps))
     dm1 = max(d - 1, 1)
     strength = max(float(strength), 0.05)
-    px = max(-1.0, min(1.0, float(px)))
-    py = max(-1.0, min(1.0, float(py)))
+    px = max(-1.0, min(1.0, float(px))) * _TILE_MOTION_SPEED
+    py = max(-1.0, min(1.0, float(py))) * _TILE_MOTION_SPEED
     if fixed_zoom:
-        z_fix = min(1.04 + 0.07 * strength, 1.16)
+        z_raw = min(1.04 + 0.07 * strength, 1.16)
+        z_fix = 1.0 + (z_raw - 1.0) * _TILE_MOTION_SPEED
         z_expr = f"{z_fix:.4f}"
     else:
-        z_delta = min(0.06 + 0.12 * strength, 0.28)
+        z_delta = min(0.06 + 0.12 * strength, 0.28) * _TILE_MOTION_SPEED
         z_expr = f"1+{z_delta:.6f}*on/{dm1}"
     x_expr = f"(iw-iw/zoom)*on/{dm1}*{px:.6f}"
     y_expr = f"(ih-ih/zoom)*on/{dm1}*{py:.6f}"
