@@ -7,7 +7,7 @@ This page expands on [the main README](../README.md): prerequisites, how the CLI
 | Need | Why |
 |------|-----|
 | **[uv](https://docs.astral.sh/uv/)** on your `PATH` | Required for `./slideshow` (it runs `uv run slideshow`) and for `./tests/run-unit.sh`. |
-| **[ripgrep](https://github.com/BurntSushi/ripgrep)** (`rg`) | Unit tests under `tests/unit/*.sh` use `rg` for assertions. Install via your package manager (e.g. `brew install ripgrep`, `apt install ripgrep`). |
+| **pytest** (via `uv sync`) | Unit tests are Python `pytest` under `tests/test_*.py` and are run by `./tests/run-unit.sh` / `make test`. |
 | **Python 3.11+** | Declared in `pyproject.toml`; uv installs/selects a compatible interpreter. |
 | **Bash** | Backend scripts under `scripts/` are Bash. |
 | **mpv** | Live slideshow playback. |
@@ -206,8 +206,8 @@ From the repository root (after `uv sync`):
 
 | Command | What it runs |
 |---------|----------------|
-| `./tests/run-unit.sh` | All `tests/unit/*.sh` (same as CI **unit** job). Requires **`uv`** and **`rg`**. |
-| `make test` | **`./tests/run-unit.sh`** plus **`uv run pytest -q tests/`**. |
+| `./tests/run-unit.sh` | Unit pytest suite (`uv sync` then `uv run pytest -q tests/`; same as CI **unit** job). Requires **`uv`**. |
+| `make test` | Alias for `./tests/run-unit.sh`. |
 | `make shellcheck` | Same **scoped** ShellCheck as CI (**shellcheck** on `PATH` required). |
 | `make ci` | **`make test`** then **`make shellcheck`** — use this before a push to match CI. |
 | `make manual-smoke` | **Not in CI.** Real **ffmpeg** encodes using `fixtures/images/`. See [tests/manual/README.md](../tests/manual/README.md). |
