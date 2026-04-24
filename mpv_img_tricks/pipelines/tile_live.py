@@ -29,7 +29,12 @@ _TILE_COMPOSITE_TILE_BUDGET = 28
 _LARGE_GRID_TILE_THRESHOLD = 120
 _LARGE_GRID_SAFE_RESOLUTION = (1280, 720)
 _RAM_CAP_RESERVE_BYTES = 4 * 1024 * 1024 * 1024
-_RAM_CAP_BYTES_PER_WORKER = int(1.25 * 1024 * 1024 * 1024)
+# Still JPEG composites: one ffmpeg tends to stay below this RSS band in practice.
+_RAM_CAP_BYTES_PER_WORKER_STILL = int(1.25 * 1024 * 1024 * 1024)
+# Temporal slides (Ken Burns, axis-alt, --animate-videos): encode + filtergraph peak higher — budget fewer workers.
+_RAM_CAP_BYTES_PER_WORKER_TEMPORAL = int(2.25 * 1024 * 1024 * 1024)
+# Back-compat name for tests / external grep (still path default).
+_RAM_CAP_BYTES_PER_WORKER = _RAM_CAP_BYTES_PER_WORKER_STILL
 
 
 def _probe_installed_ram_bytes() -> int | None:
@@ -67,12 +72,116 @@ def _probe_installed_ram_bytes() -> int | None:
     return None
 
 
-def _ram_cap_candidate_for_logging(installed_bytes: int | None) -> int | None:
+def _ram_cap_candidate_for_logging(
+    installed_bytes: int | None,
+    *,
+    bytes_per_worker: int = _RAM_CAP_BYTES_PER_WORKER_STILL,
+) -> int | None:
     """Heuristic max concurrent workers from installed RAM."""
     if installed_bytes is None or installed_bytes <= 0:
         return None
-    usable = max(installed_bytes - _RAM_CAP_RESERVE_BYTES, _RAM_CAP_BYTES_PER_WORKER)
-    return max(1, int(usable // _RAM_CAP_BYTES_PER_WORKER))
+    b = max(int(bytes_per_worker), 1)
+    usable = max(installed_bytes - _RAM_CAP_RESERVE_BYTES, b)
+    return max(1, int(usable // b))
+
+
+def _linux_mem_available_bytes() -> int | None:
+    try:
+        txt = Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    avail: int | None = None
+    for line in txt.splitlines():
+        if line.startswith("MemAvailable:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                avail = int(parts[1]) * 1024
+    return avail
+
+
+def _darwin_mem_available_bytes_estimate() -> int | None:
+    """Rough free+inactive*pagesize from vm_stat (best-effort)."""
+    try:
+        ps = subprocess.run(
+            ["sysctl", "-n", "hw.pagesize"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+        if ps.returncode != 0:
+            return None
+        page = int((ps.stdout or "").strip())
+        vs = subprocess.run(["vm_stat"], capture_output=True, text=True, check=False, timeout=3)
+        if vs.returncode != 0:
+            return None
+        free = inactive = 0
+        for line in (vs.stdout or "").splitlines():
+            ls = line.strip()
+            if ls.startswith("Pages free:"):
+                m = re.search(r":\s*([\d.]+)", line)
+                if m:
+                    free = int(float(m.group(1).replace(",", "")))
+            elif ls.startswith("Pages inactive:"):
+                m = re.search(r":\s*([\d.]+)", line)
+                if m:
+                    inactive = int(float(m.group(1).replace(",", "")))
+        if free <= 0 and inactive <= 0:
+            return None
+        return (free + inactive) * page
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _probe_mem_available_bytes() -> int | None:
+    if sys.platform == "darwin":
+        return _darwin_mem_available_bytes_estimate()
+    if sys.platform.startswith("linux"):
+        return _linux_mem_available_bytes()
+    return None
+
+
+def _process_rss_bytes_self() -> int | None:
+    """Current process RSS (best-effort; uses ps for portability)."""
+    try:
+        proc = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+        if proc.returncode != 0:
+            return None
+        raw = (proc.stdout or "").strip().split()
+        if not raw:
+            return None
+        kb = int(raw[0])
+        return kb * 1024
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _format_mb(n: int | None) -> str:
+    if n is None or n < 0:
+        return "unknown"
+    return f"{n / (1024 * 1024):.0f}"
+
+
+def _log_compositing_mem_if_due(*, done: int, total: int, in_flight: int, quiet: bool) -> None:
+    """Periodic stderr snapshot: host memory hint + parent RSS (not per-ffmpeg child)."""
+    if quiet or total <= 0:
+        return
+    step = max(1, min(10, total // 15))
+    if done != total and (done % step) != 0:
+        return
+    avail = _probe_mem_available_bytes()
+    rss = _process_rss_bytes_self()
+    _phase(
+        f"phase=compositing-mem msg=snapshot progress={done}/{total} in_flight={in_flight} "
+        f"avail_mb={_format_mb(avail)} rss_parent_mb={_format_mb(rss)}",
+        quiet=False,
+    )
 
 
 def _tile_count_for_job_cap(
@@ -98,6 +207,7 @@ def _resolve_compositing_workers(
     path_count: int,
     installed_ram_bytes: int | None,
     apply_ram_cap: bool,
+    temporal_composite: bool = False,
 ) -> tuple[int, int, int, int | None, int | None]:
     """Returns (jobs, cpu_cap, tile_cap, ram_cap_candidate, installed_ram_bytes)."""
     tile_n = _tile_count_for_job_cap(
@@ -109,7 +219,8 @@ def _resolve_compositing_workers(
     )
     cpu_cap = max(1, (os.cpu_count() or 2) // 2)
     tile_cap = max(1, _TILE_COMPOSITE_TILE_BUDGET // tile_n)
-    ram_cap = _ram_cap_candidate_for_logging(installed_ram_bytes)
+    ram_bpw = _RAM_CAP_BYTES_PER_WORKER_TEMPORAL if temporal_composite else _RAM_CAP_BYTES_PER_WORKER_STILL
+    ram_cap = _ram_cap_candidate_for_logging(installed_ram_bytes, bytes_per_worker=ram_bpw)
     caps = [cpu_cap, tile_cap]
     if apply_ram_cap and ram_cap is not None:
         caps.append(ram_cap)
@@ -1029,6 +1140,8 @@ def run_tile_live(args: Namespace) -> int:
         return 1
 
     installed_ram = _probe_installed_ram_bytes()
+    temporal_slide = _tile_slide_outputs_mp4(args)
+    ram_bpw = _RAM_CAP_BYTES_PER_WORKER_TEMPORAL if temporal_slide else _RAM_CAP_BYTES_PER_WORKER_STILL
     jobs, cpu_cap, tile_cap, ram_cap_candidate, ram_bytes_for_log = _resolve_compositing_workers(
         cols=cols,
         rows=rows,
@@ -1037,6 +1150,7 @@ def run_tile_live(args: Namespace) -> int:
         path_count=len(paths),
         installed_ram_bytes=installed_ram,
         apply_ram_cap=bool(getattr(args, "auto_ram_cap", True)),
+        temporal_composite=temporal_slide,
     )
     limit_reason = _worker_limit_reason(
         jobs=jobs,
@@ -1051,9 +1165,18 @@ def run_tile_live(args: Namespace) -> int:
         f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=job_schedule "
         f"workers={jobs} cpu_cap={cpu_cap} tile_cap={tile_cap} ram_cap_candidate={ram_c} "
         f"installed_ram_bytes={ram_b} auto_ram_cap={str(bool(getattr(args, 'auto_ram_cap', True))).lower()} "
-        f"limit_reason={limit_reason} tile_budget={_TILE_COMPOSITE_TILE_BUDGET} slides={total_slides}",
+        f"limit_reason={limit_reason} tile_budget={_TILE_COMPOSITE_TILE_BUDGET} slides={total_slides} "
+        f"temporal_composite={str(temporal_slide).lower()} ram_bytes_per_worker={ram_bpw}",
         quiet=bool(args.quiet),
     )
+    if not args.quiet:
+        avail = _probe_mem_available_bytes()
+        rss = _process_rss_bytes_self()
+        _phase(
+            f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=mem_baseline "
+            f"avail_mb={_format_mb(avail)} rss_parent_mb={_format_mb(rss)}",
+            quiet=False,
+        )
 
     def run_compositing_pass(ext: str) -> tuple[int, int]:
         progress = _Progress(
@@ -1114,6 +1237,12 @@ def run_tile_live(args: Namespace) -> int:
                     done += 1
                     approx_images = min(done * max(tile_count, 1), len(paths))
                     progress.update(done, extra=f"in_flight={in_flight} images={approx_images}/{len(paths)}")
+                _log_compositing_mem_if_due(
+                    done=done,
+                    total=total_slides,
+                    in_flight=len(pending),
+                    quiet=bool(args.quiet),
+                )
                 while len(pending) < jobs:
                     nf = schedule_next(ex)
                     if nf is None:

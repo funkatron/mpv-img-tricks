@@ -24,6 +24,7 @@ Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks
 - `mpv_img_tricks/pipelines/tile_live.py` is the tile runtime; behavior is tuned through CLI flags in `mpv_img_tricks/cli.py`.
 - Worker scheduling now uses `cpu_cap`, `tile_cap`, and optional RAM clamp (`--auto-ram-cap` on by default; disable with `--no-auto-ram-cap`).
 - `job_schedule` logs include `limit_reason` (`cpu`, `tile`, `ram`, or ties such as `tile+ram`) to show which cap constrained workers.
+- Temporal slides (Ken Burns / `axis-alt` / `--animate-videos`) use a **higher `ram_bytes_per_worker`** in `job_schedule`, so `ram_cap_candidate` is usually **lower** than for still JPEG slides; **`mem_baseline`** and periodic **`phase=compositing-mem`** log approximate host **`avail_mb`** and driver **`rss_parent_mb`** (see [docs/setup.md](docs/setup.md)).
 - Large-grid safety policy is controlled by `--tile-safe-mode` (`auto` / `warn` / `off`).
 - Compositing quality/perf tradeoffs are controlled by `--tile-quality` (`fast` / `balanced` / `high`).
 - Animated tile path has experimental hwaccel toggle `--tile-hwaccel` (`off` / `auto`); `auto` is usually faster but can raise peak RSS.

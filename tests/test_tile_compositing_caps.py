@@ -77,6 +77,41 @@ def test_ram_cap_candidate_not_applied_when_disabled(monkeypatch: pytest.MonkeyP
     assert ram_cap == 1
 
 
+def test_temporal_composite_uses_stricter_ram_per_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MP4 / motion paths assume higher per-ffmpeg RSS → smaller ram_cap than still JPEG."""
+    monkeypatch.setattr("os.cpu_count", lambda: 32)
+    ten_gb = 10 * 1024 * 1024 * 1024
+    jobs_still, _, _, ram_still, _ = tl._resolve_compositing_workers(
+        cols=1,
+        rows=1,
+        do_randomize=False,
+        group_size=4,
+        path_count=10,
+        installed_ram_bytes=ten_gb,
+        apply_ram_cap=True,
+        temporal_composite=False,
+    )
+    jobs_temp, _, _, ram_temp, _ = tl._resolve_compositing_workers(
+        cols=1,
+        rows=1,
+        do_randomize=False,
+        group_size=4,
+        path_count=10,
+        installed_ram_bytes=ten_gb,
+        apply_ram_cap=True,
+        temporal_composite=True,
+    )
+    assert ram_still is not None and ram_temp is not None
+    assert ram_still > ram_temp
+    assert jobs_temp <= jobs_still
+
+
+def test_mem_probe_helpers_do_not_raise() -> None:
+    tl._probe_mem_available_bytes()
+    tl._process_rss_bytes_self()
+    assert tl._format_mb(1024 * 1024) == "1"
+
+
 def test_retryable_jpeg_failure_matches_known_encoder_and_scaler_signatures() -> None:
     stderr_blob = """
     [swscaler @ 0x123] Failed initializing scaling graph (Resource temporarily unavailable)
