@@ -202,6 +202,34 @@ def test_ffmpeg_hwaccel_args_only_for_animated_auto_mode() -> None:
     assert tl._ffmpeg_hwaccel_args(Namespace(animate_videos=True, tile_hwaccel="auto")) == ["-hwaccel", "auto"]
 
 
+def test_ffmpeg_codec_still_motion_mp4_matches_zoompan_fps() -> None:
+    """Ken Burns / axis-alt MP4 must not use -r 30 while zoompan emits higher fps (was visibly choppy)."""
+    args = Namespace(
+        animate_videos=False,
+        duration="2.0",
+        encoder="auto",
+        tile_hwaccel="off",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="off",
+    )
+    cmd = tl._ffmpeg_codec_args(args, out_ext=".mp4")
+    assert cmd[cmd.index("-r") + 1] == str(tl._TILE_MOTION_ZOOMPAN_FPS)
+
+
+def test_ffmpeg_codec_animate_videos_mp4_stays_at_30fps() -> None:
+    args = Namespace(
+        animate_videos=True,
+        duration="2.0",
+        encoder="auto",
+        tile_hwaccel="off",
+        tile_quality="balanced",
+        tile_motion="off",
+    )
+    cmd = tl._ffmpeg_codec_args(args, out_ext=".mp4")
+    assert cmd[cmd.index("-r") + 1] == "30"
+
+
 def test_cache_key_changes_with_tile_hwaccel_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tl.sys, "platform", "darwin")
     base = dict(
@@ -322,7 +350,7 @@ def test_build_filter_parallax_changes_zoompan_between_tiles() -> None:
     assert filt0 != filt1
     # Smooth pan uses output frame index on (not cumulative x+ steps).
     assert "(iw-iw/zoom)*on/" in filt1
-    assert "fps=60" in filt1
+    assert f"fps={tl._TILE_MOTION_ZOOMPAN_FPS}" in filt1
     segs = [s for s in filt1.split(";") if "zoompan=" in s]
     assert len(segs) >= 2
     assert segs[0] != segs[1]

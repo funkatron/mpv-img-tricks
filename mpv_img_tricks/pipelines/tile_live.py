@@ -576,6 +576,8 @@ def _apply_large_grid_safe_resolution(
 _TILE_MOTION_TEMPORAL = frozenset({"ken-burns", "axis-alt"})
 # Scales pan extent and zoom ramp for all tile zoompan motion (Ken Burns + axis-alt).
 _TILE_MOTION_SPEED = 0.5
+# zoompan output fps; still-motion tile MP4 encode uses the same -r (see _ffmpeg_codec_args).
+_TILE_MOTION_ZOOMPAN_FPS = 60
 
 
 def _tile_motion_mode(args: Namespace) -> str:
@@ -608,7 +610,7 @@ def _zoompan_linear_pan(
     steady zoom. If False, ``z`` ramps with ``on`` (Ken Burns–style coupling of
     pan and zoom). Pan extent and zoom delta are scaled by ``_TILE_MOTION_SPEED``.
     """
-    fps = 60
+    fps = _TILE_MOTION_ZOOMPAN_FPS
     d = max(2, int(max(float(duration), 1e-6) * fps))
     dm1 = max(d - 1, 1)
     strength = max(float(strength), 0.05)
@@ -775,6 +777,8 @@ def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
 def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     tile_quality = str(getattr(args, "tile_quality", "balanced"))
     motion_mp4 = _tile_motion_needs_temporal_slides(args) and out_ext.lower() == ".mp4"
+    # Ken Burns / axis-alt: zoompan runs at _TILE_MOTION_ZOOMPAN_FPS; -r 30 was decimating → chunky motion.
+    encode_r = str(_TILE_MOTION_ZOOMPAN_FPS) if (motion_mp4 and not bool(args.animate_videos)) else "30"
     if not args.animate_videos and not motion_mp4:
         if out_ext == ".png":
             return ["-frames:v", "1", "-c:v", "png"]
@@ -785,10 +789,10 @@ def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     x265_preset = {"fast": "fast", "balanced": "medium", "high": "slow"}[tile_quality]
     encoder = _animated_encoder(args)
     if encoder == "hevc_videotoolbox":
-        return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "15M", "-pix_fmt", "yuv420p"]
+        return ["-t", str(args.duration), "-r", encode_r, "-an", "-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "15M", "-pix_fmt", "yuv420p"]
     if encoder == "libx265":
-        return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx265", "-preset", x265_preset, "-crf", "25", "-pix_fmt", "yuv420p"]
-    return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx264", "-preset", x264_preset, "-crf", "20", "-pix_fmt", "yuv420p"]
+        return ["-t", str(args.duration), "-r", encode_r, "-an", "-c:v", "libx265", "-preset", x265_preset, "-crf", "25", "-pix_fmt", "yuv420p"]
+    return ["-t", str(args.duration), "-r", encode_r, "-an", "-c:v", "libx264", "-preset", x264_preset, "-crf", "20", "-pix_fmt", "yuv420p"]
 
 
 def _animated_encoder(args: Namespace) -> str:
