@@ -277,7 +277,9 @@ def test_build_filter_parallax_changes_zoompan_between_tiles() -> None:
         duration=2.0,
     )
     assert filt0 != filt1
-    # Tile 0 vs tile 1: parallax auto flips horizontal pan direction (x+ vs x-).
-    seg0 = filt1.split("[1:v]")[0]
-    assert "x='x+" in seg0 or "x='x-" in seg0
-    assert "x='x+" in filt1 and "x='x-" in filt1
+    # Smooth pan uses output frame index on (not cumulative x+ steps).
+    assert "(iw-iw/zoom)*on/" in filt1
+    assert "fps=60" in filt1
+    segs = [s for s in filt1.split(";") if "zoompan=" in s]
+    assert len(segs) >= 2
+    assert segs[0] != segs[1]

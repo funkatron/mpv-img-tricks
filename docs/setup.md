@@ -184,7 +184,7 @@ Use `--tile-quality fast|balanced|high` to tune compositing quality/performance 
 
 - **`--tile-motion off|ken-burns`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking. Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
 - **`--tile-parallax off|auto`** (default **`off`**): with Ken Burns, vary pan direction and intensity **per tile index** in a deterministic way. **`--tile-parallax auto` requires `--tile-motion ken-burns`**.
-- **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`1.5`** for tuning.
+- **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`2.0`** for tuning. Motion is rendered at **60 fps** inside each slide clip; longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
 
 Example:
 

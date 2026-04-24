@@ -480,30 +480,30 @@ def _zoompan_ken_burns(
     strength: float,
     parallax: str,
 ) -> str:
-    """Return a zoompan filter chain segment (no leading label)."""
-    fps = 30
+    """Return a zoompan filter chain segment (no leading label).
+
+    Motion is driven by output frame index ``on`` (linear in time) so zoom and
+    pan stay smooth. A higher output fps gives shorter steps between frames
+    than 30 fps for the same wall-clock duration.
+    """
+    fps = 60
     d = max(2, int(max(float(duration), 1e-6) * fps))
+    dm1 = max(d - 1, 1)
     strength = max(float(strength), 0.05)
-    z_inc = 0.0001 * strength
-    z_cap = min(1.0 + 0.12 * strength, 1.25)
+    # Total zoom delta from first to last frame (was ~0.006 at strength 1 — invisible).
+    z_delta = min(0.06 + 0.12 * strength, 0.28)
     if parallax == "auto":
-        dirx = 1.0 if (tile_index % 2) == 0 else -1.0
-        diry = -1.0 if ((tile_index // 2) % 2) == 0 else 1.0
-        x_mag = 0.12 * strength * (0.85 + 0.05 * (tile_index % 5))
-        y_mag = 0.07 * strength * (0.85 + 0.05 * ((tile_index + 1) % 5))
+        px = (1.0 if (tile_index % 2) == 0 else -1.0) * (0.82 + 0.04 * (tile_index % 5))
+        py = (-1.0 if ((tile_index // 2) % 2) == 0 else 1.0) * (0.48 + 0.04 * ((tile_index + 1) % 5))
     else:
-        dirx = 1.0
-        diry = 0.5
-        x_mag = 0.12 * strength
-        y_mag = 0.06 * strength
-    x_step = x_mag * dirx
-    y_step = y_mag * diry
-    x_expr = f"x+{x_step:.6f}" if x_step >= 0 else f"x{x_step:.6f}"
-    y_expr = f"y+{y_step:.6f}" if y_step >= 0 else f"y{y_step:.6f}"
-    return (
-        f"zoompan=z='min(zoom+{z_inc:.8f},{z_cap:.4f})':"
-        f"x='{x_expr}':y='{y_expr}':d={d}:s={cell_w}x{cell_h}:fps={fps}"
-    )
+        px = 0.88
+        py = 0.38
+    px = max(-1.0, min(1.0, px))
+    py = max(-1.0, min(1.0, py))
+    z_expr = f"1+{z_delta:.6f}*on/{dm1}"
+    x_expr = f"(iw-iw/zoom)*on/{dm1}*{px:.6f}"
+    y_expr = f"(ih-ih/zoom)*on/{dm1}*{py:.6f}"
+    return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={d}:s={cell_w}x{cell_h}:fps={fps}"
 
 
 def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str, *, tile_quality: str) -> str:
