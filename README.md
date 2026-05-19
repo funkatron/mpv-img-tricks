@@ -284,5 +284,10 @@ Current focus:
 - Continue behavior cleanup and docs alignment as more runtime orchestration lives in Python.
 - Expand smoke/integration coverage for watch mode and multi-instance workflows.
 
-## Warning
-Some effects may cause seizures. Use responsibly!
+## Visual safety note
+Some slideshow effects can include rapid motion, flashes, or high-contrast changes. Keep this in mind when sharing screens or running slideshows in group settings.
+
+For safer defaults:
+- Use longer `--duration` values.
+- Keep motion features (`--tile-motion`, `--animate-videos`) off unless needed.
+- Avoid running motion-heavy presets around people who may be photosensitive unless they have opted in.

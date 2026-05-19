@@ -209,6 +209,12 @@ Row-based diagonal drift:
 uv run slideshow live ~/pics --effect tile --grid 3x3 --tile-motion axis-alt --tile-parallax auto --duration 4
 ```
 
+### Visual safety note
+
+Some effects can include rapid motion, flashes, or strong contrast changes. Keep this in mind when sharing screens or running slideshows in group settings.
+
+For safer defaults, start with longer `--duration` values and keep motion features (`--tile-motion`, `--animate-videos`) off.
+
 ## Routine checks
 
 From the repository root (after `uv sync`):
