@@ -1,6 +1,6 @@
 # Manual effect checks (real ffmpeg)
 
-Automated coverage lives in `tests/unit/*.sh` (stubbed ffmpeg/mpv). Use this folder when you want **real encodes** and **quick eyeballing** on your Mac.
+Automated coverage lives in `tests/test_*.py` (pytest, with stubs where needed). Use this folder when you want **real encodes** and **quick eyeballing** on your Mac.
 
 ## One-time: tiny fixtures
 

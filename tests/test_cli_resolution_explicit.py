@@ -28,7 +28,7 @@ def test_resolution_marked_explicit_even_when_default_value_passed() -> None:
 def test_tile_perf_flags_have_expected_defaults() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["live", "fixtures/images", "--effect", "tile"])
-    assert args.tile_quality == "balanced"
+    assert args.tile_quality == "high"
     assert args.tile_safe_mode == "auto"
     assert args.auto_ram_cap is True
     assert args.tile_hwaccel == "off"
@@ -55,3 +55,66 @@ def test_tile_perf_flags_can_be_overridden() -> None:
     assert args.tile_safe_mode == "off"
     assert args.auto_ram_cap is False
     assert args.tile_hwaccel == "auto"
+
+
+def test_tile_motion_flags_have_expected_defaults() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["live", "fixtures/images", "--effect", "tile"])
+    assert args.tile_motion == "off"
+    assert args.tile_parallax == "off"
+    assert args.tile_motion_strength == 1.0
+    assert args.tile_motion_oversample == "auto"
+
+
+def test_tile_motion_flags_can_be_overridden() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        [
+            "live",
+            "fixtures/images",
+            "--effect",
+            "tile",
+            "--tile-motion",
+            "ken-burns",
+            "--tile-parallax",
+            "auto",
+            "--tile-motion-strength",
+            "0.75",
+            "--tile-motion-oversample",
+            "2.0",
+        ]
+    )
+    assert args.tile_motion == "ken-burns"
+    assert args.tile_parallax == "auto"
+    assert args.tile_motion_strength == 0.75
+    assert args.tile_motion_oversample == "2.0"
+
+
+def test_tile_motion_axis_alt_parse() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        ["live", "fixtures/images", "--effect", "tile", "--tile-motion", "axis-alt"]
+    )
+    assert args.tile_motion == "axis-alt"
+
+
+def test_tile_motion_axis_x_parse() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        ["live", "fixtures/images", "--effect", "tile", "--tile-motion", "axis-x"]
+    )
+    assert args.tile_motion == "axis-x"
+
+
+def test_tile_motion_axis_y_parse() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        ["live", "fixtures/images", "--effect", "tile", "--tile-motion", "axis-y"]
+    )
+    assert args.tile_motion == "axis-y"
+
+
+def test_skip_media_validate_flag_parse() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["live", "fixtures/images", "--effect", "tile", "--skip-media-validate"])
+    assert args.skip_media_validate is True

@@ -7,7 +7,7 @@ This page expands on [the main README](../README.md): prerequisites, how the CLI
 | Need | Why |
 |------|-----|
 | **[uv](https://docs.astral.sh/uv/)** on your `PATH` | Required for `./slideshow` (it runs `uv run slideshow`) and for `./tests/run-unit.sh`. |
-| **[ripgrep](https://github.com/BurntSushi/ripgrep)** (`rg`) | Unit tests under `tests/unit/*.sh` use `rg` for assertions. Install via your package manager (e.g. `brew install ripgrep`, `apt install ripgrep`). |
+| **pytest** (via `uv sync`) | Unit tests are Python `pytest` under `tests/test_*.py` and are run by `./tests/run-unit.sh` / `make test`. |
 | **Python 3.11+** | Declared in `pyproject.toml`; uv installs/selects a compatible interpreter. |
 | **Bash** | Backend scripts under `scripts/` are Bash. |
 | **mpv** | Live slideshow playback. |
@@ -87,6 +87,7 @@ A published wheel contains only the Python package. **Running the full tool stil
 | `MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS` | If non-empty, **all** slideshow mpv launches skip auto-loading **`mpv-scripts/slideshow-bindings.lua`** (overrides `--use-slideshow-bindings yes` on **`mpv-pipeline.sh`**). |
 | `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE` | If non-empty, **`--effect tile`** validate-media does **not** read or write **`~/.cache/mpv-img-tricks/ffprobe-tile-v5`** (forces live **`ffprobe`** every run; use while debugging “everything skipped”). |
 | `MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG` | If non-empty, **`--effect tile`** prints extra **stderr** lines: **`ffprobe`** path/version and step-by-step probe errors for up to **five** skipped files. When **all** files are skipped, **three** samples run automatically (still **stderr**) so a broken install (e.g. invalid **`ffprobe`** flags) is obvious without setting this first. |
+| `MPV_IMG_TRICKS_TILE_INPUT_CAP` | Optional positive integer cap for max tile inputs per ffmpeg composite run. Lower values improve stability on very large grids (more, smaller slides); higher values can be faster if your ffmpeg build and system handle larger filtergraphs. |
 
 ## Optional JSON defaults
 
@@ -119,7 +120,7 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 | Mode | Meaning of `--duration` |
 |------|-------------------------|
 | **basic** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
-| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments, ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
+| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate-videos`**) or **temporal tile motion** (**`--tile-motion ken-burns`** or **`axis-alt`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
 
 ### Plain render (`--render` without `--effect`)
 
@@ -166,7 +167,9 @@ For `--effect tile` (and similar compositing paths), work is not silent: phases 
 1. **validate-media** — Optional `ffprobe` pass over the playlist (progress lines every 25 files for large sets).
 2. **probe-encoders** — With `--animate-videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
 3. **prepare-audio** — Optional silence trim via ffmpeg when `--sound` is set.
-4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). With default settings, the RAM candidate now participates in worker clamping; disable via `--no-auto-ram-cap` if you need to force CPU/tile-only caps. Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
+4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). **`job_schedule`** includes **`temporal_composite`** and **`ram_bytes_per_worker`**: when **`true`** (Ken Burns, **`axis-alt`**, or **`--animate-videos`**), each concurrent encode is budgeted **more RAM headroom**, so **`ram_cap_candidate`** is usually **smaller** than for still-JPEG slides — fewer workers in flight to reduce swap / lockups on large libraries. With default settings, the RAM candidate participates in worker clamping; **`--no-auto-ram-cap`** removes that clamp (can increase pressure — only if you accept the risk). Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
+
+   **Host memory snapshots:** right after **`job_schedule`**, **`mem_baseline`** logs approximate **`avail_mb`** (Linux **`MemAvailable`**; macOS **`vm_stat`** free+inactive pages — a rough hint) and **`rss_parent_mb`** for the **slideshow driver process** (from **`ps`**, not each `ffmpeg` child). During compositing, **`phase=compositing-mem`** repeats on a coarse schedule with the same fields so you can watch pressure while slides render. Use **`2>&1 | tee`** to capture both progress and memory lines.
 
 If screen size detection fails (no usable `system_profiler` / `xrandr`), tile layout falls back to `--resolution`.
 
@@ -180,14 +183,32 @@ Use `--tile-quality fast|balanced|high` to tune compositing quality/performance 
 
 `--tile-hwaccel auto` enables an experimental hardware-acceleration path for animated tiles (`--animate-videos`) by requesting ffmpeg decode hwaccel and preferring VideoToolbox encoding on macOS when `--encoder auto` is used. In local A/B testing this mode was faster but had a slightly higher peak RSS; use `off` when minimizing memory is more important than speed. Keep `--tile-hwaccel off` (default) for the most predictable cross-platform behavior.
 
+### Tile motion (Ken Burns and axis-alt)
+
+- **`--tile-motion off|ken-burns|axis-alt`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking. **`ken-burns`** combines diagonal-style drift (with optional **`--tile-parallax auto`** variation). **`axis-alt`** alternates **pure axis** pan by column: even columns move **only on X**, odd columns **only on Y** (constant zoom so the path is a straight line). Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
+- **`--tile-parallax off|auto`** (default **`off`**): flip / vary pan direction in a deterministic way. **`--tile-parallax auto` requires `--tile-motion ken-burns` or `axis-alt`**.
+- **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`2.0`** for tuning. Motion is rendered at **60 fps** inside each slide clip and the MP4 encoder uses the **same frame rate** so frames are not dropped to 30 fps (which looked choppy). Longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
+
+Example:
+
+```bash
+uv run slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
+```
+
+Column-alternating drift:
+
+```bash
+uv run slideshow live ~/pics --effect tile --grid 3x3 --tile-motion axis-alt --tile-parallax auto --duration 4
+```
+
 ## Routine checks
 
 From the repository root (after `uv sync`):
 
 | Command | What it runs |
 |---------|----------------|
-| `./tests/run-unit.sh` | All `tests/unit/*.sh` (same as CI **unit** job). Requires **`uv`** and **`rg`**. |
-| `make test` | **`./tests/run-unit.sh`** plus **`uv run pytest -q tests/`**. |
+| `./tests/run-unit.sh` | Unit pytest suite (`uv sync` then `uv run pytest -q tests/`; same as CI **unit** job). Requires **`uv`**. |
+| `make test` | Alias for `./tests/run-unit.sh`. |
 | `make shellcheck` | Same **scoped** ShellCheck as CI (**shellcheck** on `PATH` required). |
 | `make ci` | **`make test`** then **`make shellcheck`** — use this before a push to match CI. |
 | `make manual-smoke` | **Not in CI.** Real **ffmpeg** encodes using `fixtures/images/`. See [tests/manual/README.md](../tests/manual/README.md). |
@@ -223,3 +244,7 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
   `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE=1 slideshow … --effect tile …`
 - If it still skips all paths, test one file:  
   `ffprobe -v error -i /path/to/one/image` — non-zero exit means **ffprobe/ffmpeg** cannot read that media (corrupt format, permissions, or missing codecs).
+
+**Tile log shows `cache_hit` but no `job_schedule`**
+
+- **`cache_hit`** means composites for that cache key already exist; ffmpeg compositing is skipped, so **`job_schedule`** does not appear. Add **`--clear-cache`** to the same **`slideshow live …`** command to clear **`tile-fixed`** / **`tile-randomized`** (and ffprobe tile caches) and force a **`cache_miss`** rebuild.

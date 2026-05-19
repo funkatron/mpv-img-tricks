@@ -48,6 +48,17 @@ def _ipc_socket_path() -> str:
     return path
 
 
+def _terminate_process(proc: subprocess.Popen[bytes] | None) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=1.0)
+
+
 def _add_and_seek_to_image(ipc_socket: str, image_path: str) -> None:
     p = Path(image_path)
     if not p.is_file():
@@ -77,6 +88,7 @@ def _watch_loop(
     seen: set[str],
     ipc_socket: str,
     stop: threading.Event,
+    active_proc: list[subprocess.Popen[bytes] | None],
 ) -> None:
     include = r"\.(jpg|jpeg|png|webp)$"
     while not stop.is_set():
@@ -92,15 +104,30 @@ def _watch_loop(
             cmd.insert(1, "-r")
         cmd.append(str(source_dir))
         try:
-            out = subprocess.run(cmd, capture_output=True, check=False, timeout=None)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
         except FileNotFoundError:
             return
+        active_proc[0] = proc
+        try:
+            while proc.poll() is None:
+                if stop.wait(timeout=0.2):
+                    _terminate_process(proc)
+                    return
+            stdout = proc.stdout.read() if proc.stdout is not None else b""
+            returncode = proc.returncode
+        finally:
+            if active_proc[0] is proc:
+                active_proc[0] = None
         if stop.is_set():
             return
-        if out.returncode != 0:
+        if returncode != 0:
             time.sleep(0.3)
             continue
-        line = (out.stdout.decode("utf-8", errors="replace").strip().splitlines() or [""])[-1]
+        line = (stdout.decode("utf-8", errors="replace").strip().splitlines() or [""])[-1]
         newfile = line.strip()
         if not newfile:
             continue
@@ -197,6 +224,7 @@ def run_basic_slideshow(args: object) -> int:
     ipc_socket: str | None = None
     seen_files: set[str] = set(paths)
     stop_watch = threading.Event()
+    active_fswatch: list[subprocess.Popen[bytes] | None] = [None]
     watcher: threading.Thread | None = None
     run_watch = bool(args.watch)
 
@@ -215,6 +243,7 @@ def run_basic_slideshow(args: object) -> int:
                     "seen": seen_files,
                     "ipc_socket": ipc_socket or "",
                     "stop": stop_watch,
+                    "active_proc": active_fswatch,
                 },
                 daemon=True,
             )
@@ -266,8 +295,9 @@ def run_basic_slideshow(args: object) -> int:
         )
     finally:
         stop_watch.set()
+        _terminate_process(active_fswatch[0])
         if watcher is not None:
-            watcher.join(timeout=1.0)
+            watcher.join(timeout=2.0)
         try:
             playlist_path.unlink()
         except OSError:

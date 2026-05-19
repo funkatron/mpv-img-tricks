@@ -23,14 +23,14 @@ After **`uv sync`**, run the same checks CI uses:
 make ci
 ```
 
-That runs **`./tests/run-unit.sh`** (needs **`uv`** and **`rg`**) plus **shellcheck** on the scoped Bash scripts. Use **`make test`** for unit tests only. Details: [.github/workflows/ci.yml](.github/workflows/ci.yml), [docs/setup.md](docs/setup.md#routine-checks).
+That runs **`./tests/run-unit.sh`** (pytest via `uv`) plus **shellcheck** on the scoped Bash scripts. Use **`make test`** for unit tests only. Details: [.github/workflows/ci.yml](.github/workflows/ci.yml), [docs/setup.md](docs/setup.md#routine-checks).
 
 **Real ffmpeg checks** (optional, after changing tile or plain render): [tests/manual/README.md](tests/manual/README.md) — run **`./tests/manual/generate-fixtures.sh`** once, then **`make manual-smoke`** (needs **ffmpeg** / **ffprobe** on `PATH`; writes under **`tmp/effect-smoke/`**).
 
 ## Requirements (summary)
 
 - **[uv](https://docs.astral.sh/uv/)** on your `PATH` for `./slideshow` and for `./tests/run-unit.sh`.
-- **[ripgrep](https://github.com/BurntSushi/ripgrep)** (`rg`) for `./tests/run-unit.sh` (assertions in `tests/unit/*.sh`).
+- **pytest** (installed via `uv sync`) for `./tests/run-unit.sh` and `make test`.
 - **Python 3.11+**, **Bash**, **mpv**, and **ffmpeg** for real runs (versions are up to you; the CLI shells out to the Bash backends).
 - **fswatch** only if you use `--watch` (see [docs/setup.md](docs/setup.md)).
 

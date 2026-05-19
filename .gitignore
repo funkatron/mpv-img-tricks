@@ -15,6 +15,7 @@
 
 # Editor / IDE
 .vscode/
+.cursor/plans/
 
 # macOS
 .DS_Store

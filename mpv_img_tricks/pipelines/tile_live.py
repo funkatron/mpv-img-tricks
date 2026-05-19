@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import concurrent.futures
 from concurrent.futures import FIRST_COMPLETED, wait
-import hashlib
 import os
 import random
 import re
@@ -15,156 +14,96 @@ import tempfile
 import time
 from argparse import Namespace
 from pathlib import Path
+try:
+    import resource
+except ImportError:  # pragma: no cover - non-posix fallback
+    resource = None
 
 from mpv_img_tricks.media_discovery import discover_sources_to_playlist
 from mpv_img_tricks.mpv_pipeline import run_mpv_slideshow
 from mpv_img_tricks.paths import get_repo_root
+from mpv_img_tricks.pipelines.tile.caching import (
+    _build_cache_key,
+    _probe_cache_key,
+    _source_manifest_hash,
+)
+from mpv_img_tricks.pipelines.tile.filter_graph import (
+    _build_filter,
+    _filter_for_still_jpeg_encode,
+    _motion_sample_scale,
+    _round_even,
+)
+from mpv_img_tricks.pipelines.tile.motion import (
+    _TILE_MOTION_TEMPORAL,
+    _TILE_MOTION_ZOOMPAN_FPS,
+    _tile_motion_mode,
+    _tile_motion_needs_temporal_slides,
+    _tile_slide_outputs_mp4,
+)
+from mpv_img_tricks.pipelines.tile.scheduling import (
+    _TEMPORAL_COMPOSITE_MAX_PARALLEL,
+    _TILE_COMPOSITE_TILE_BUDGET,
+    _compute_tile_layouts,
+    _composite_ram_bytes_per_worker,
+    _format_mb,
+    _probe_installed_ram_bytes,
+    _probe_mem_available_bytes,
+    _process_rss_bytes_self,
+    _resolve_compositing_workers,
+    _worker_limit_reason,
+)
 
 _PHASE_PREFIX = "mpv-img-tricks:"
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff", ".heic"}
 _VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v", ".mkv", ".webm", ".avi", ".mpg", ".mpeg"}
 
-# Conservative: scale parallel ffmpeg workers down as grid/cell count grows (Pass 1).
-_TILE_COMPOSITE_TILE_BUDGET = 28
 _LARGE_GRID_TILE_THRESHOLD = 120
 _LARGE_GRID_SAFE_RESOLUTION = (1280, 720)
-_RAM_CAP_RESERVE_BYTES = 4 * 1024 * 1024 * 1024
-_RAM_CAP_BYTES_PER_WORKER = int(1.25 * 1024 * 1024 * 1024)
+_FFMPEG_INPUT_FD_RESERVE = 48
+_FFMPEG_INPUT_HARD_CAP = 64
+_FFMPEG_INPUT_CAP_ENV = "MPV_IMG_TRICKS_TILE_INPUT_CAP"
 
 
-def _probe_installed_ram_bytes() -> int | None:
-    """Best-effort installed RAM in bytes. Used for Pass 3 telemetry only (not applied to caps yet)."""
-    if sys.platform == "darwin":
-        try:
-            proc = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if proc.returncode == 0:
-                raw = (proc.stdout or "").strip()
-                if raw.isdigit():
-                    return int(raw)
-        except OSError:
-            pass
-    if sys.platform.startswith("linux"):
-        try:
-            meminfo = Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace")
-            for line in meminfo.splitlines():
-                if line.startswith("MemTotal:"):
-                    parts = line.split()
-                    if len(parts) >= 2 and parts[1].isdigit():
-                        return int(parts[1]) * 1024  # kB
-        except OSError:
-            pass
-    try:
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        phys = int(os.sysconf("SC_PHYS_PAGES"))
-        return page_size * phys
-    except (ValueError, OSError, AttributeError, OverflowError):
-        pass
-    return None
-
-
-def _ram_cap_candidate_for_logging(installed_bytes: int | None) -> int | None:
-    """Heuristic max concurrent workers from installed RAM."""
-    if installed_bytes is None or installed_bytes <= 0:
+def _env_ffmpeg_input_cap() -> int | None:
+    raw = os.environ.get(_FFMPEG_INPUT_CAP_ENV, "").strip()
+    if not raw:
         return None
-    usable = max(installed_bytes - _RAM_CAP_RESERVE_BYTES, _RAM_CAP_BYTES_PER_WORKER)
-    return max(1, int(usable // _RAM_CAP_BYTES_PER_WORKER))
+    try:
+        n = int(raw)
+    except ValueError:
+        return None
+    return n if n > 0 else None
 
 
-def _tile_count_for_job_cap(
-    *,
-    cols: int,
-    rows: int,
-    do_randomize: bool,
-    group_size: int,
-    path_count: int,
-) -> int:
-    grid = cols * rows
-    if do_randomize:
-        return max(grid, min(max(group_size, 1), max(path_count, 1)))
-    return max(grid, 1)
+def _ffmpeg_max_input_count() -> int:
+    """Per-ffmpeg input cap (RLIMIT-aware, plus conservative decoder fan-in ceiling)."""
+    cap = _env_ffmpeg_input_cap() or _FFMPEG_INPUT_HARD_CAP
+    if resource is None or not hasattr(resource, "RLIMIT_NOFILE"):
+        return cap
+    try:
+        soft_limit, _hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (AttributeError, OSError, ValueError):
+        return cap
+    if soft_limit in (-1, getattr(resource, "RLIM_INFINITY", -1)) or soft_limit <= 0:
+        return cap
+    rlimit_cap = max(1, int(soft_limit) - _FFMPEG_INPUT_FD_RESERVE)
+    return max(1, min(cap, rlimit_cap))
 
 
-def _resolve_compositing_workers(
-    *,
-    cols: int,
-    rows: int,
-    do_randomize: bool,
-    group_size: int,
-    path_count: int,
-    installed_ram_bytes: int | None,
-    apply_ram_cap: bool,
-) -> tuple[int, int, int, int | None, int | None]:
-    """Returns (jobs, cpu_cap, tile_cap, ram_cap_candidate, installed_ram_bytes)."""
-    tile_n = _tile_count_for_job_cap(
-        cols=cols,
-        rows=rows,
-        do_randomize=do_randomize,
-        group_size=group_size,
-        path_count=path_count,
+def _log_compositing_mem_if_due(*, done: int, total: int, in_flight: int, quiet: bool) -> None:
+    """Periodic stderr snapshot: host memory hint + parent RSS (not per-ffmpeg child)."""
+    if quiet or total <= 0:
+        return
+    step = max(1, min(10, total // 15))
+    if done != total and (done % step) != 0:
+        return
+    avail = _probe_mem_available_bytes()
+    rss = _process_rss_bytes_self()
+    _phase(
+        f"phase=compositing-mem msg=snapshot progress={done}/{total} in_flight={in_flight} "
+        f"avail_mb={_format_mb(avail)} rss_parent_mb={_format_mb(rss)}",
+        quiet=False,
     )
-    cpu_cap = max(1, (os.cpu_count() or 2) // 2)
-    tile_cap = max(1, _TILE_COMPOSITE_TILE_BUDGET // tile_n)
-    ram_cap = _ram_cap_candidate_for_logging(installed_ram_bytes)
-    caps = [cpu_cap, tile_cap]
-    if apply_ram_cap and ram_cap is not None:
-        caps.append(ram_cap)
-    jobs = max(1, min(caps))
-    return jobs, cpu_cap, tile_cap, ram_cap, installed_ram_bytes
-
-
-def _worker_limit_reason(
-    *,
-    jobs: int,
-    cpu_cap: int,
-    tile_cap: int,
-    ram_cap_candidate: int | None,
-    auto_ram_cap: bool,
-) -> str:
-    reasons: list[str] = []
-    if jobs == cpu_cap:
-        reasons.append("cpu")
-    if jobs == tile_cap:
-        reasons.append("tile")
-    if auto_ram_cap and ram_cap_candidate is not None and jobs == ram_cap_candidate:
-        reasons.append("ram")
-    if not reasons:
-        return "unknown"
-    return "+".join(reasons)
-
-
-def _compute_tile_layouts(
-    paths: list[str],
-    *,
-    do_randomize: bool,
-    cols: int,
-    rows: int,
-    group_size: int,
-) -> list[tuple[int, int]]:
-    """Return ordered (ccols, crows) per slide; same random choices as previous single-pass build."""
-    layouts: list[tuple[int, int]] = []
-    cursor = 0
-    while cursor < len(paths):
-        if do_randomize:
-            candidates: list[tuple[int, int]] = []
-            remaining = len(paths) - cursor
-            for c in range(1, group_size + 1):
-                for r in range(1, group_size + 1):
-                    if c * r <= group_size and c * r <= remaining:
-                        candidates.append((c, r))
-            if not candidates:
-                break
-            ccols, crows = random.choice(candidates)
-        else:
-            ccols, crows = cols, rows
-        per_slide = ccols * crows
-        layouts.append((ccols, crows))
-        cursor += per_slide
-    return layouts
 
 
 def _now_stamp() -> str:
@@ -307,31 +246,6 @@ def _discover_tile_sources(sources: list[str], *, order: str, recursive: bool) -
     return paths
 
 
-def _sha256_file_prefix(path: Path, prefix_bytes: int = 65536) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        h.update(fh.read(prefix_bytes))
-    return h.hexdigest()
-
-
-def _media_identity(path: Path) -> str:
-    st = path.stat()
-    return f"{st.st_dev}:{st.st_ino}:{st.st_size}:{int(st.st_mtime)}:{_sha256_file_prefix(path)}"
-
-
-def _source_manifest_hash(paths: list[str]) -> str:
-    h = hashlib.sha256()
-    for p in paths:
-        ident = _media_identity(Path(p))
-        h.update(ident.encode("utf-8", errors="replace"))
-        h.update(b"\0")
-    return h.hexdigest()
-
-
-def _probe_cache_key(path: Path) -> str:
-    return hashlib.md5(_media_identity(path).encode("utf-8", errors="replace")).hexdigest()
-
-
 def _ffprobe_ok(path: str) -> bool:
     try:
         proc = subprocess.run(
@@ -345,7 +259,10 @@ def _ffprobe_ok(path: str) -> bool:
     return proc.returncode == 0
 
 
-def _validate_media(paths: list[str], *, quiet: bool) -> tuple[list[str], int]:
+def _validate_media(paths: list[str], *, quiet: bool, skip_probe: bool = False) -> tuple[list[str], int]:
+    if skip_probe:
+        _phase("phase=validate-media msg=skipped reason=flag", quiet=quiet)
+        return paths, 0
     if shutil.which("ffprobe") is None:
         _phase("phase=validate-media msg=ffprobe_missing skipping_probe=true", quiet=quiet)
         return paths, 0
@@ -398,6 +315,57 @@ def _parse_grid(grid: str | None) -> tuple[int, int]:
     if cols < 1 or rows < 1:
         raise ValueError(f"invalid --grid value: {raw!r}")
     return cols, rows
+
+
+def _log_motion_sampling_summary(
+    *,
+    layouts: list[tuple[int, int]],
+    screen_w: int,
+    screen_h: int,
+    spacing: int,
+    tile_motion_oversample: str,
+    randomize: bool,
+    quiet: bool,
+) -> None:
+    if not layouts:
+        return
+    samples: list[tuple[float, int, int, int, int]] = []
+    for ccols, crows in layouts:
+        usable_w = screen_w - spacing * (ccols - 1)
+        usable_h = screen_h - spacing * (crows - 1)
+        if usable_w <= 0 or usable_h <= 0:
+            continue
+        cell_w = usable_w // ccols
+        cell_h = usable_h // crows
+        scale = _motion_sample_scale(tile_motion_oversample, cell_w=cell_w, cell_h=cell_h)
+        sample_w = _round_even(cell_w * scale)
+        sample_h = _round_even(cell_h * scale)
+        samples.append((scale, sample_w, sample_h, cell_w, cell_h))
+    if not samples:
+        return
+    uniq = sorted(set(samples))
+    mode = "randomized" if randomize else "fixed"
+    setting = str(tile_motion_oversample)
+    if len(uniq) == 1:
+        scale, sw, sh, cw, ch = uniq[0]
+        _phase(
+            f"phase=compositing-{mode} msg=motion_sampling setting={setting} "
+            f"resolved_scale={scale:.2f} sample={sw}x{sh} cell={cw}x{ch}",
+            quiet=quiet,
+        )
+        return
+    min_scale = min(v[0] for v in uniq)
+    max_scale = max(v[0] for v in uniq)
+    min_sw = min(v[1] for v in uniq)
+    max_sw = max(v[1] for v in uniq)
+    min_sh = min(v[2] for v in uniq)
+    max_sh = max(v[2] for v in uniq)
+    _phase(
+        f"phase=compositing-{mode} msg=motion_sampling setting={setting} "
+        f"resolved_scale_range={min_scale:.2f}-{max_scale:.2f} "
+        f"sample_range={min_sw}x{min_sh}-{max_sw}x{max_sh} unique_layout_profiles={len(uniq)}",
+        quiet=quiet,
+    )
 
 
 def _parse_resolution(resolution: str) -> tuple[int, int]:
@@ -462,61 +430,12 @@ def _apply_large_grid_safe_resolution(
     return safe_w, safe_h
 
 
-def _tile_cell_filter(cell_w: int, cell_h: int, scale_mode: str, *, tile_quality: str) -> str:
-    scale_flags = {
-        "fast": "fast_bilinear",
-        "balanced": "bicubic",
-        "high": "lanczos",
-    }[tile_quality]
-    if scale_mode == "fill":
-        return (
-            f"scale={cell_w}:{cell_h}:force_original_aspect_ratio=increase:flags={scale_flags},"
-            f"crop={cell_w}:{cell_h}"
-        )
-    return (
-        f"scale={cell_w}:{cell_h}:force_original_aspect_ratio=decrease:flags={scale_flags},"
-        f"pad={cell_w}:{cell_h}:(ow-iw)/2:(oh-ih)/2:black"
-    )
-
-
-def _build_filter(
-    *, cols: int, rows: int, screen_w: int, screen_h: int, spacing: int, scale_mode: str, tile_quality: str
-) -> tuple[str, int]:
-    tile_count = cols * rows
-    usable_w = screen_w - spacing * (cols - 1)
-    usable_h = screen_h - spacing * (rows - 1)
-    if usable_w <= 0 or usable_h <= 0:
-        raise ValueError("spacing too large for selected grid/screen")
-    cell_w = usable_w // cols
-    cell_h = usable_h // rows
-    cell = _tile_cell_filter(cell_w, cell_h, scale_mode, tile_quality=tile_quality)
-    parts: list[str] = []
-    for i in range(tile_count):
-        parts.append(f"[{i}:v]{cell}[s{i}]")
-    stack_inputs = "".join(f"[s{i}]" for i in range(tile_count))
-    layout = "|".join(
-        f"{(i % cols) * (cell_w + spacing)}_{(i // cols) * (cell_h + spacing)}" for i in range(tile_count)
-    )
-    if tile_count == 1:
-        parts.append(f"[s0]copy[grid];[grid]pad={screen_w}:{screen_h}:(ow-iw)/2:(oh-ih)/2:black[out]")
-    else:
-        parts.append(
-            f"{stack_inputs}xstack=inputs={tile_count}:layout={layout}:fill=black[grid];[grid]pad={screen_w}:{screen_h}:(ow-iw)/2:(oh-ih)/2:black[out]"
-        )
-    return ";".join(parts), tile_count
-
-
-def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
-    """xstack+pad often yields yuv444p; MJPEG (.jpg) needs a JPEG-friendly pix fmt or encode fails."""
-    if not filter_complex.endswith("[out]"):
-        return filter_complex
-    stem = filter_complex[: -len("[out]")]
-    return f"{stem}[pjfmt];[pjfmt]format=yuvj420p[out]"
-
-
 def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     tile_quality = str(getattr(args, "tile_quality", "balanced"))
-    if not args.animate_videos:
+    motion_mp4 = _tile_motion_needs_temporal_slides(args) and out_ext.lower() == ".mp4"
+    # Ken Burns / axis-alt: zoompan runs at _TILE_MOTION_ZOOMPAN_FPS; -r 30 was decimating → chunky motion.
+    encode_r = str(_TILE_MOTION_ZOOMPAN_FPS) if (motion_mp4 and not bool(args.animate_videos)) else "30"
+    if not args.animate_videos and not motion_mp4:
         if out_ext == ".png":
             return ["-frames:v", "1", "-c:v", "png"]
         quality_to_q = {"fast": "5", "balanced": "2", "high": "1"}
@@ -526,10 +445,10 @@ def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     x265_preset = {"fast": "fast", "balanced": "medium", "high": "slow"}[tile_quality]
     encoder = _animated_encoder(args)
     if encoder == "hevc_videotoolbox":
-        return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "15M", "-pix_fmt", "yuv420p"]
+        return ["-t", str(args.duration), "-r", encode_r, "-an", "-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "15M", "-pix_fmt", "yuv420p"]
     if encoder == "libx265":
-        return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx265", "-preset", x265_preset, "-crf", "25", "-pix_fmt", "yuv420p"]
-    return ["-t", str(args.duration), "-r", "30", "-an", "-c:v", "libx264", "-preset", x264_preset, "-crf", "20", "-pix_fmt", "yuv420p"]
+        return ["-t", str(args.duration), "-r", encode_r, "-an", "-c:v", "libx265", "-preset", x265_preset, "-crf", "25", "-pix_fmt", "yuv420p"]
+    return ["-t", str(args.duration), "-r", encode_r, "-an", "-c:v", "libx264", "-preset", x264_preset, "-crf", "20", "-pix_fmt", "yuv420p"]
 
 
 def _animated_encoder(args: Namespace) -> str:
@@ -566,8 +485,9 @@ def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: 
         "1",
     ]
     cmd.extend(_ffmpeg_hwaccel_args(args))
+    temporal_stills = bool(args.animate_videos) or _tile_motion_needs_temporal_slides(args)
     for item in inputs:
-        if args.animate_videos and not _is_video(item):
+        if temporal_stills and not _is_video(item):
             cmd.extend(["-loop", "1", "-t", str(args.duration), "-i", item])
         elif _is_video(item):
             cmd.extend(["-ss", "0.25", "-i", item])
@@ -608,6 +528,11 @@ def _composite_one_slide(
         spacing=spacing,
         scale_mode=scale_mode,
         tile_quality=tile_quality,
+        tile_motion=str(getattr(args, "tile_motion", "off")),
+        tile_parallax=str(getattr(args, "tile_parallax", "off")),
+        tile_motion_strength=float(getattr(args, "tile_motion_strength", 1.0)),
+        tile_motion_oversample=str(getattr(args, "tile_motion_oversample", "auto")),
+        duration=float(args.duration),
     )
     inputs = [paths[min(cursor_start + i, len(paths) - 1)] for i in range(per_slide)]
     out_file = out_dir / f"{slide_idx:04d}{ext}"
@@ -702,18 +627,6 @@ def _play_mpv(files: list[str], args: Namespace, *, shuffle: bool) -> int:
             pass
 
 
-def _build_cache_key(effect: str, manifest: str, args: Namespace, screen_w: int, screen_h: int, extras: str = "") -> str:
-    resolved_encoder = _animated_encoder(args) if bool(getattr(args, "animate_videos", False)) else str(getattr(args, "encoder", "auto"))
-    payload = (
-        f"effect={effect}\nmanifest={manifest}\nscreen={screen_w}x{screen_h}\n"
-        f"duration={args.duration}\nscale={args.scale_mode}\nspacing={args.spacing or 0}\n"
-        f"animate={args.animate_videos}\nencoder={args.encoder}\nresolved_encoder={resolved_encoder}\n"
-        f"tile_hwaccel={getattr(args, 'tile_hwaccel', 'off')}\n"
-        f"tile_quality={getattr(args, 'tile_quality', 'balanced')}\n{extras}\n"
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 def build_tile_backend_command(args: Namespace) -> list[str]:
     recursive = not bool(getattr(args, "effect_no_recursive", False))
     paths = _discover_tile_sources(list(args.sources), order=args.order, recursive=recursive)
@@ -739,7 +652,11 @@ def build_tile_backend_command(args: Namespace) -> list[str]:
         safe_mode=safe_mode,
         quiet=True,
     )
-    if len(paths) <= cols * rows and int(args.spacing or 0) == 0:
+    if (
+        len(paths) <= cols * rows
+        and int(args.spacing or 0) == 0
+        and str(getattr(args, "tile_motion", "off")) == "off"
+    ):
         cmd = ["mpv", f"--geometry={screen_w}x{screen_h}+0+0", "--fullscreen", f"--image-display-duration={args.duration}"]
         cmd.extend(paths[: cols * rows])
         return cmd
@@ -762,7 +679,11 @@ def run_tile_live(args: Namespace) -> int:
 
     _phase(f"phase=discover effect=tile playlist_lines={len(paths)}", quiet=bool(args.quiet))
     _phase(f"phase=tile msg=start animate={str(bool(args.animate_videos)).lower()}", quiet=bool(args.quiet))
-    paths, skipped = _validate_media(paths, quiet=bool(args.quiet))
+    paths, skipped = _validate_media(
+        paths,
+        quiet=bool(args.quiet),
+        skip_probe=bool(getattr(args, "skip_media_validate", False)),
+    )
     if skipped and not args.quiet:
         print(f"[{_now_stamp()}] Skipped {skipped} unreadable media file(s).", file=sys.stderr)
     if not paths:
@@ -798,7 +719,13 @@ def run_tile_live(args: Namespace) -> int:
 
     do_randomize = bool(args.randomize)
     tile_count = cols * rows
-    if len(paths) <= tile_count and spacing == 0 and not do_randomize and int(args.instances) == 1:
+    if (
+        len(paths) <= tile_count
+        and spacing == 0
+        and not do_randomize
+        and int(args.instances) == 1
+        and str(getattr(args, "tile_motion", "off")) == "off"
+    ):
         filter_complex, n_tiles = _build_filter(
             cols=cols,
             rows=rows,
@@ -807,6 +734,7 @@ def run_tile_live(args: Namespace) -> int:
             spacing=spacing,
             scale_mode=args.scale_mode,
             tile_quality=str(getattr(args, "tile_quality", "balanced")),
+            tile_motion_oversample=str(getattr(args, "tile_motion_oversample", "auto")),
         )
         cmd = ["mpv", f"--geometry={screen_w}x{screen_h}+0+0", "--fullscreen", f"--image-display-duration={args.duration}", f"--lavfi-complex={filter_complex}"]
         first = True
@@ -824,12 +752,22 @@ def run_tile_live(args: Namespace) -> int:
     cache_root.mkdir(parents=True, exist_ok=True)
     manifest = _source_manifest_hash(paths)
     extra = f"grid={cols}x{rows}\n" if not do_randomize else f"group={args.group_size or 4}\n"
-    key = _build_cache_key("tile-randomized" if do_randomize else "tile-fixed", manifest, args, screen_w, screen_h, extra)
+    key = _build_cache_key(
+        "tile-randomized" if do_randomize else "tile-fixed",
+        manifest,
+        args,
+        screen_w,
+        screen_h,
+        extra,
+        resolved_encoder=_animated_encoder(args)
+        if bool(getattr(args, "animate_videos", False))
+        else str(getattr(args, "encoder", "auto")),
+    )
     out_dir = cache_root / key
-    preferred_ext = ".mp4" if args.animate_videos else ".jpg"
+    preferred_ext = ".mp4" if _tile_slide_outputs_mp4(args) else ".jpg"
     if not getattr(args, "clear_cache", False):
         candidate_exts = [preferred_ext]
-        if not args.animate_videos:
+        if not _tile_slide_outputs_mp4(args):
             candidate_exts.append(".png")
         for ext in candidate_exts:
             existing = sorted(str(p) for p in out_dir.glob(f"*{ext}"))
@@ -837,12 +775,14 @@ def run_tile_live(args: Namespace) -> int:
                 continue
             if ext == ".png":
                 _phase(
-                    f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_hit_png_fallback key={key}",
+                    f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_hit_png_fallback "
+                    f"compositing=skipped key={key}",
                     quiet=bool(args.quiet),
                 )
             else:
                 _phase(
-                    f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_hit key={key}",
+                    f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_hit "
+                    f"compositing=skipped key={key}",
                     quiet=bool(args.quiet),
                 )
             return _play_mpv(existing, args, shuffle=do_randomize)
@@ -853,18 +793,52 @@ def run_tile_live(args: Namespace) -> int:
     _phase(f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_miss key={key}", quiet=bool(args.quiet))
 
     group_size = max(int(args.group_size or 4), 1)
+    requested_tiles_per_slide = group_size if do_randomize else (cols * rows)
+    max_inputs_per_slide = _ffmpeg_max_input_count()
+    max_tiles_per_slide = (
+        max_inputs_per_slide
+        if max_inputs_per_slide is not None and max_inputs_per_slide < requested_tiles_per_slide
+        else None
+    )
+    if max_tiles_per_slide is not None:
+        _phase(
+            f"phase=compositing-{'randomized' if do_randomize else 'fixed'} "
+            f"msg=input_cap_applied requested_tiles_per_slide={requested_tiles_per_slide} "
+            f"capped_tiles_per_slide={max_tiles_per_slide} reserve_fd={_FFMPEG_INPUT_FD_RESERVE} "
+            f"hard_cap={_FFMPEG_INPUT_HARD_CAP} env_cap={os.environ.get(_FFMPEG_INPUT_CAP_ENV, '') or 'unset'}",
+            quiet=bool(args.quiet),
+        )
     layouts = _compute_tile_layouts(
         paths,
         do_randomize=do_randomize,
         cols=cols,
         rows=rows,
         group_size=group_size,
+        max_tiles_per_slide=max_tiles_per_slide,
+        random_choice=random.choice,
     )
     total_slides = len(layouts)
     if total_slides == 0:
         return 1
+    if str(getattr(args, "tile_motion", "off")) != "off":
+        _log_motion_sampling_summary(
+            layouts=layouts,
+            screen_w=screen_w,
+            screen_h=screen_h,
+            spacing=spacing,
+            tile_motion_oversample=str(getattr(args, "tile_motion_oversample", "auto")),
+            randomize=do_randomize,
+            quiet=bool(args.quiet),
+        )
 
     installed_ram = _probe_installed_ram_bytes()
+    temporal_slide = _tile_slide_outputs_mp4(args)
+    mem_avail = _probe_mem_available_bytes()
+    ram_bpw = _composite_ram_bytes_per_worker(
+        temporal_composite=temporal_slide,
+        screen_w=screen_w,
+        screen_h=screen_h,
+    )
     jobs, cpu_cap, tile_cap, ram_cap_candidate, ram_bytes_for_log = _resolve_compositing_workers(
         cols=cols,
         rows=rows,
@@ -873,6 +847,10 @@ def run_tile_live(args: Namespace) -> int:
         path_count=len(paths),
         installed_ram_bytes=installed_ram,
         apply_ram_cap=bool(getattr(args, "auto_ram_cap", True)),
+        temporal_composite=temporal_slide,
+        mem_available_bytes=mem_avail if bool(getattr(args, "auto_ram_cap", True)) else None,
+        screen_w=screen_w,
+        screen_h=screen_h,
     )
     limit_reason = _worker_limit_reason(
         jobs=jobs,
@@ -880,6 +858,7 @@ def run_tile_live(args: Namespace) -> int:
         tile_cap=tile_cap,
         ram_cap_candidate=ram_cap_candidate,
         auto_ram_cap=bool(getattr(args, "auto_ram_cap", True)),
+        temporal_parallel_cap=_TEMPORAL_COMPOSITE_MAX_PARALLEL if temporal_slide else None,
     )
     ram_b = "unknown" if ram_bytes_for_log is None else str(ram_bytes_for_log)
     ram_c = "unknown" if ram_cap_candidate is None else str(ram_cap_candidate)
@@ -887,9 +866,19 @@ def run_tile_live(args: Namespace) -> int:
         f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=job_schedule "
         f"workers={jobs} cpu_cap={cpu_cap} tile_cap={tile_cap} ram_cap_candidate={ram_c} "
         f"installed_ram_bytes={ram_b} auto_ram_cap={str(bool(getattr(args, 'auto_ram_cap', True))).lower()} "
-        f"limit_reason={limit_reason} tile_budget={_TILE_COMPOSITE_TILE_BUDGET} slides={total_slides}",
+        f"limit_reason={limit_reason} tile_budget={_TILE_COMPOSITE_TILE_BUDGET} slides={total_slides} "
+        f"temporal_composite={str(temporal_slide).lower()} temporal_max_parallel="
+        f"{_TEMPORAL_COMPOSITE_MAX_PARALLEL if temporal_slide else 0} ram_bytes_per_worker={ram_bpw}",
         quiet=bool(args.quiet),
     )
+    if not args.quiet:
+        avail = _probe_mem_available_bytes()
+        rss = _process_rss_bytes_self()
+        _phase(
+            f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=mem_baseline "
+            f"avail_mb={_format_mb(avail)} rss_parent_mb={_format_mb(rss)}",
+            quiet=False,
+        )
 
     def run_compositing_pass(ext: str) -> tuple[int, int]:
         progress = _Progress(
@@ -950,6 +939,12 @@ def run_tile_live(args: Namespace) -> int:
                     done += 1
                     approx_images = min(done * max(tile_count, 1), len(paths))
                     progress.update(done, extra=f"in_flight={in_flight} images={approx_images}/{len(paths)}")
+                _log_compositing_mem_if_due(
+                    done=done,
+                    total=total_slides,
+                    in_flight=len(pending),
+                    quiet=bool(args.quiet),
+                )
                 while len(pending) < jobs:
                     nf = schedule_next(ex)
                     if nf is None:
@@ -960,7 +955,7 @@ def run_tile_live(args: Namespace) -> int:
 
     output_ext = preferred_ext
     failures, retryable_failures = run_compositing_pass(output_ext)
-    if failures and not args.animate_videos and output_ext == ".jpg" and retryable_failures > 0:
+    if failures and not _tile_slide_outputs_mp4(args) and output_ext == ".jpg" and retryable_failures > 0:
         _phase(
             f"phase=compositing-{'randomized' if do_randomize else 'fixed'} "
             f"msg=retry_png_fallback reason=jpeg_or_scaler_failure failures={failures}",

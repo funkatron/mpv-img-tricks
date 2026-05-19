@@ -131,8 +131,8 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--tile-quality",
         choices=["fast", "balanced", "high"],
-        default="balanced",
-        help="Tile compositing quality/perf preset (default: balanced)",
+        default="high",
+        help="Tile compositing quality/perf preset (default: high)",
     )
     parser.add_argument(
         "--tile-safe-mode",
@@ -159,6 +159,38 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
         default="off",
         help="Experimental tile hwaccel for animated tiles; auto is usually faster but may use more RAM (default: off)",
     )
+    parser.add_argument(
+        "--tile-motion",
+        choices=["off", "ken-burns", "axis-x", "axis-y", "axis-alt"],
+        default="off",
+        help=(
+            "Per-tile motion during compositing; uses short MP4 slides when not --animate-videos (default: off). "
+            "ken-burns: pan+zoom on a deterministic subset of tiles; "
+            "axis-x: even rows drift left, odd rows right; "
+            "axis-y: even rows drift up, odd rows down; "
+            "axis-alt: combines axis-x and axis-y."
+        ),
+    )
+    parser.add_argument(
+        "--tile-parallax",
+        choices=["off", "auto"],
+        default="off",
+        help="With tile motion, vary pan magnitude per tile (deterministic; default: off); requires a tile motion mode",
+    )
+    parser.add_argument(
+        "--tile-motion-strength",
+        type=float,
+        default=1.0,
+        help="Scale Ken Burns motion intensity (default: 1.0; try 0.5–1.5)",
+    )
+    parser.add_argument(
+        "--tile-motion-oversample",
+        default="auto",
+        help=(
+            "Motion sampling scale before final tile fit/fill (default: auto). "
+            "Use values >=1.0 (e.g. 1.5, 2.0); higher is smoother but slower."
+        ),
+    )
 
 
 def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:
@@ -182,6 +214,11 @@ def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:
         "--clear-cache",
         action="store_true",
         help="Remove mpv-img-tricks caches under ~/.cache/mpv-img-tricks/ (ffprobe validate + tile composites), then run",
+    )
+    parser.add_argument(
+        "--skip-media-validate",
+        action="store_true",
+        help="Skip ffprobe media validation for faster tile startup (trust source files)",
     )
 
 
@@ -244,6 +281,22 @@ def build_plain_render_dry_run_line(args: Namespace) -> str:
 def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None:
     if args.master_control and args.no_master_control:
         parser.error("choose either --master-control or --no-master-control")
+
+    if getattr(args, "effect", None) == "tile":
+        tm = getattr(args, "tile_motion", "off")
+        if getattr(args, "tile_parallax", "off") == "auto" and tm == "off":
+            parser.error("--tile-parallax auto requires --tile-motion to be set (not off)")
+
+    if getattr(args, "tile_motion_strength", 1.0) <= 0:
+        parser.error("--tile-motion-strength must be positive")
+    tos = str(getattr(args, "tile_motion_oversample", "auto")).strip().lower()
+    if tos != "auto":
+        try:
+            parsed = float(tos)
+        except ValueError:
+            parser.error("--tile-motion-oversample must be 'auto' or a number >= 1.0")
+        if parsed < 1.0:
+            parser.error("--tile-motion-oversample must be >= 1.0")
 
     if args.render and args.effect:
         parser.error("--effect cannot be combined with --render (use plain --render only)")
