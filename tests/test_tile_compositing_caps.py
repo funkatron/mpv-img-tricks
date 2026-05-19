@@ -7,6 +7,8 @@ from argparse import Namespace
 import pytest
 
 from mpv_img_tricks.pipelines import tile_live as tl
+from mpv_img_tricks.pipelines.tile import caching as tc
+from mpv_img_tricks.pipelines.tile.scheduling import _TEMPORAL_COMPOSITE_MAX_PARALLEL
 
 
 def test_resolve_jobs_cpu_and_tile_budget_intersection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,6 +77,135 @@ def test_ram_cap_candidate_not_applied_when_disabled(monkeypatch: pytest.MonkeyP
     assert tile_cap == tl._TILE_COMPOSITE_TILE_BUDGET
     assert jobs == 2
     assert ram_cap == 1
+
+
+def test_temporal_parallel_cap_limits_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Motion/MP4 path caps ffmpeg fan-out independent of CPU when RAM is ample."""
+    monkeypatch.setattr("os.cpu_count", lambda: 16)
+    jobs, cpu_cap, tile_cap, _, _ = tl._resolve_compositing_workers(
+        cols=1,
+        rows=1,
+        do_randomize=False,
+        group_size=4,
+        path_count=10,
+        installed_ram_bytes=128 * 1024**3,
+        apply_ram_cap=True,
+        temporal_composite=True,
+    )
+    assert cpu_cap == 8
+    assert tile_cap == tl._TILE_COMPOSITE_TILE_BUDGET
+    assert jobs == _TEMPORAL_COMPOSITE_MAX_PARALLEL
+
+
+def test_low_mem_available_clamps_workers_below_temporal_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("os.cpu_count", lambda: 16)
+    jobs, _, _, _, _ = tl._resolve_compositing_workers(
+        cols=1,
+        rows=1,
+        do_randomize=False,
+        group_size=4,
+        path_count=10,
+        installed_ram_bytes=32 * 1024**3,
+        apply_ram_cap=True,
+        temporal_composite=True,
+        mem_available_bytes=2 * 1024**3,
+        screen_w=3440,
+        screen_h=1440,
+    )
+    assert jobs == 1
+
+
+def test_compute_tile_layouts_caps_fixed_grid_by_max_tiles_per_slide() -> None:
+    paths = [f"/tmp/{i}.jpg" for i in range(751)]
+    layouts = tl._compute_tile_layouts(
+        paths,
+        do_randomize=False,
+        cols=20,
+        rows=20,
+        group_size=4,
+        max_tiles_per_slide=208,
+        random_choice=lambda items: items[0],
+    )
+    assert layouts
+    assert all((c * r) <= 208 for c, r in layouts)
+    assert all((c, r) == (20, 10) for c, r in layouts)
+    assert len(layouts) == 4
+
+
+def test_compute_tile_layouts_caps_randomized_candidates_by_max_tiles_per_slide() -> None:
+    paths = [f"/tmp/{i}.jpg" for i in range(64)]
+    layouts = tl._compute_tile_layouts(
+        paths,
+        do_randomize=True,
+        cols=8,
+        rows=8,
+        group_size=16,
+        max_tiles_per_slide=6,
+        random_choice=lambda items: max(items, key=lambda pair: pair[0] * pair[1]),
+    )
+    assert layouts
+    assert all((c * r) <= 6 for c, r in layouts)
+
+
+def test_ffmpeg_max_input_count_uses_hard_cap_when_resource_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tl, "resource", None)
+    assert tl._ffmpeg_max_input_count() == tl._FFMPEG_INPUT_HARD_CAP
+
+
+def test_ffmpeg_max_input_count_is_min_of_hard_and_rlimit(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeResource:
+        RLIMIT_NOFILE = 7
+        RLIM_INFINITY = 10**12
+
+        @staticmethod
+        def getrlimit(_kind: int) -> tuple[int, int]:
+            return (256, 256)
+
+    monkeypatch.setattr(tl, "resource", _FakeResource)
+    assert tl._ffmpeg_max_input_count() == tl._FFMPEG_INPUT_HARD_CAP
+
+
+def test_ffmpeg_max_input_count_honors_tight_rlimit(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeResource:
+        RLIMIT_NOFILE = 7
+        RLIM_INFINITY = 10**12
+
+        @staticmethod
+        def getrlimit(_kind: int) -> tuple[int, int]:
+            return (72, 256)
+
+    monkeypatch.setattr(tl, "resource", _FakeResource)
+    assert tl._ffmpeg_max_input_count() == 24
+
+
+def test_env_ffmpeg_input_cap_uses_positive_int(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MPV_IMG_TRICKS_TILE_INPUT_CAP", "96")
+    assert tl._env_ffmpeg_input_cap() == 96
+
+
+def test_env_ffmpeg_input_cap_ignores_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MPV_IMG_TRICKS_TILE_INPUT_CAP", "abc")
+    assert tl._env_ffmpeg_input_cap() is None
+    monkeypatch.setenv("MPV_IMG_TRICKS_TILE_INPUT_CAP", "0")
+    assert tl._env_ffmpeg_input_cap() is None
+
+
+def test_ffmpeg_max_input_count_prefers_env_cap_over_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MPV_IMG_TRICKS_TILE_INPUT_CAP", "64")
+    monkeypatch.setattr(tl, "resource", None)
+    assert tl._ffmpeg_max_input_count() == 64
+
+
+def test_worker_limit_reason_reports_temporal_cap() -> None:
+    reason = tl._worker_limit_reason(
+        jobs=2,
+        cpu_cap=8,
+        tile_cap=28,
+        ram_cap_candidate=7,
+        auto_ram_cap=True,
+        temporal_parallel_cap=2,
+    )
+    assert reason == "temporal"
 
 
 def test_temporal_composite_uses_stricter_ram_per_worker(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -171,6 +302,7 @@ def test_tile_filter_includes_quality_scale_flags() -> None:
         tile_quality="high",
     )
     assert "flags=lanczos" in filt
+    assert "force_divisible_by=2" in filt
 
 
 def test_worker_limit_reason_reports_tied_caps() -> None:
@@ -240,19 +372,23 @@ def test_cache_key_changes_with_tile_hwaccel_mode(monkeypatch: pytest.MonkeyPatc
         encoder="auto",
         tile_quality="balanced",
     )
-    key_off = tl._build_cache_key(
+    key_off = tc._build_cache_key(
         "tile-fixed",
         "manifest-x",
         Namespace(**base, tile_hwaccel="off"),
         1280,
         720,
+        "",
+        resolved_encoder="libx264",
     )
-    key_auto = tl._build_cache_key(
+    key_auto = tc._build_cache_key(
         "tile-fixed",
         "manifest-x",
         Namespace(**base, tile_hwaccel="auto"),
         1280,
         720,
+        "",
+        resolved_encoder="hevc_videotoolbox",
     )
     assert key_off != key_auto
 
@@ -267,33 +403,41 @@ def test_cache_key_changes_with_tile_motion_settings() -> None:
         tile_quality="balanced",
         tile_hwaccel="off",
     )
-    key_off = tl._build_cache_key(
+    key_off = tc._build_cache_key(
         "tile-fixed",
         "manifest-x",
         Namespace(**base, tile_motion="off", tile_parallax="off", tile_motion_strength=1.0),
         1280,
         720,
+        "",
+        resolved_encoder="auto",
     )
-    key_kb = tl._build_cache_key(
+    key_kb = tc._build_cache_key(
         "tile-fixed",
         "manifest-x",
         Namespace(**base, tile_motion="ken-burns", tile_parallax="off", tile_motion_strength=1.0),
         1280,
         720,
+        "",
+        resolved_encoder="auto",
     )
-    key_par = tl._build_cache_key(
+    key_par = tc._build_cache_key(
         "tile-fixed",
         "manifest-x",
         Namespace(**base, tile_motion="ken-burns", tile_parallax="auto", tile_motion_strength=1.0),
         1280,
         720,
+        "",
+        resolved_encoder="auto",
     )
-    key_axis = tl._build_cache_key(
+    key_axis = tc._build_cache_key(
         "tile-fixed",
         "manifest-x",
         Namespace(**base, tile_motion="axis-alt", tile_parallax="off", tile_motion_strength=1.0),
         1280,
         720,
+        "",
+        resolved_encoder="auto",
     )
     assert key_off != key_kb
     assert key_kb != key_par
@@ -318,6 +462,70 @@ def test_build_filter_ken_burns_includes_zoompan() -> None:
     assert "zoompan=" in filt
     assert "[m0]" in filt and "[m1]" in filt
     assert "xstack=inputs=2" in filt
+
+
+def test_build_filter_ken_burns_animates_all_tiles_for_modest_grids() -> None:
+    """Grids up to 16 tiles animate every Ken Burns input; larger grids subsample."""
+    filt8, _ = tl._build_filter(
+        cols=8,
+        rows=1,
+        screen_w=1600,
+        screen_h=200,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=1.0,
+    )
+    assert filt8.count("zoompan=") == 8
+    filt1, _ = tl._build_filter(
+        cols=1,
+        rows=1,
+        screen_w=320,
+        screen_h=200,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=1.0,
+    )
+    assert filt1.count("zoompan=") == 1
+    filt20, _ = tl._build_filter(
+        cols=20,
+        rows=1,
+        screen_w=4000,
+        screen_h=200,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=1.0,
+    )
+    assert filt20.count("zoompan=") == max(1, 20 // 4)
+
+
+def test_build_filter_ken_burns_four_wide_animates_each_tile() -> None:
+    filt, n = tl._build_filter(
+        cols=4,
+        rows=1,
+        screen_w=1280,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="ken-burns",
+        tile_parallax="auto",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    assert n == 4
+    assert filt.count("zoompan=") == 4
 
 
 def test_build_filter_parallax_changes_zoompan_between_tiles() -> None:
@@ -348,20 +556,90 @@ def test_build_filter_parallax_changes_zoompan_between_tiles() -> None:
         duration=2.0,
     )
     assert filt0 != filt1
-    # Smooth pan uses output frame index on (not cumulative x+ steps).
-    assert "(iw-iw/zoom)*on/" in filt1
+    # Smooth pan uses centered linear progression over output frame index ``on``.
+    assert "(2*on/" in filt1
     assert f"fps={tl._TILE_MOTION_ZOOMPAN_FPS}" in filt1
+    segs0 = [s for s in filt0.split(";") if "zoompan=" in s]
     segs = [s for s in filt1.split(";") if "zoompan=" in s]
-    assert len(segs) >= 2
-    assert segs[0] != segs[1]
+    assert len(segs0) == 2
+    assert len(segs) == 2
+
+    def _zoompan_expr(seg: str) -> str:
+        z = seg.split("zoompan=", 1)[1]
+        return z.split(",scale=", 1)[0]
+
+    assert _zoompan_expr(segs0[0]) == _zoompan_expr(segs0[1])
+    assert _zoompan_expr(segs[0]) != _zoompan_expr(segs0[0])
 
 
-def test_build_filter_axis_alt_even_col_horizontal_dominant() -> None:
+def test_build_filter_axis_x_row_direction() -> None:
     import re
 
     filt, n = tl._build_filter(
         cols=2,
-        rows=1,
+        rows=2,
+        screen_w=640,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-x",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    assert n == 4
+    assert "zoompan=" in filt
+    z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
+    z2 = next(s for s in filt.split(";") if s.startswith("[2:v]"))
+    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
+    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
+    mx2 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
+    my2 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
+    # Row 0 (tile 0): left; row 1 (tile 2): right.
+    assert mx0 < -0.2
+    assert abs(my0) < 1e-9
+    assert mx2 > 0.2
+    assert abs(my2) < 1e-9
+    z0z = re.search(r"zoompan=z='([^']+)'", z0).group(1)
+    assert "on" not in z0z
+
+
+def test_build_filter_axis_y_row_direction() -> None:
+    import re
+
+    filt, _ = tl._build_filter(
+        cols=2,
+        rows=2,
+        screen_w=640,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-y",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
+    z2 = next(s for s in filt.split(";") if s.startswith("[2:v]"))
+    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
+    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
+    mx2 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
+    my2 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
+    # Row 0 (tile 0): up; row 1 (tile 2): down.
+    assert abs(mx0) < 1e-9
+    assert my0 < -0.2
+    assert abs(mx2) < 1e-9
+    assert my2 > 0.2
+
+
+def test_build_filter_axis_alt_combines_x_and_y_row_direction() -> None:
+    import re
+
+    filt, _ = tl._build_filter(
+        cols=2,
+        rows=2,
         screen_w=640,
         screen_h=360,
         spacing=0,
@@ -372,18 +650,108 @@ def test_build_filter_axis_alt_even_col_horizontal_dominant() -> None:
         tile_motion_strength=1.0,
         duration=2.0,
     )
-    assert n == 2
-    assert "zoompan=" in filt
     z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
-    z1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
-    mx0 = float(re.search(r"x='\(iw-iw/zoom\)\*on/\d+\*([0-9.-]+)'", z0).group(1))
-    my0 = float(re.search(r"y='\(ih-ih/zoom\)\*on/\d+\*([0-9.-]+)'", z0).group(1))
-    mx1 = float(re.search(r"x='\(iw-iw/zoom\)\*on/\d+\*([0-9.-]+)'", z1).group(1))
-    my1 = float(re.search(r"y='\(ih-ih/zoom\)\*on/\d+\*([0-9.-]+)'", z1).group(1))
-    # Col 0 even: X only; col 1 odd: Y only; constant zoom (no `on` in z expr).
-    assert abs(mx0) > 0.2
-    assert abs(my0) < 1e-9
-    assert abs(mx1) < 1e-9
-    assert abs(my1) > 0.2
+    z2 = next(s for s in filt.split(";") if s.startswith("[2:v]"))
+    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
+    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
+    mx2 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
+    my2 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
+    # axis-alt now applies both axis-x and axis-y rules.
+    assert mx0 < -0.2 and my0 < -0.2
+    assert mx2 > 0.2 and my2 > 0.2
     z0z = re.search(r"zoompan=z='([^']+)'", z0).group(1)
     assert "on" not in z0z
+
+
+def test_build_filter_axis_x_single_row_keeps_motion_expression() -> None:
+    filt, _ = tl._build_filter(
+        cols=3,
+        rows=1,
+        screen_w=900,
+        screen_h=300,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-x",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    assert "zoompan=" in filt
+    assert "0.5*-0.900000*(2*on/" in filt
+
+
+def test_build_filter_axis_y_single_row_keeps_motion_expression() -> None:
+    filt, _ = tl._build_filter(
+        cols=3,
+        rows=1,
+        screen_w=900,
+        screen_h=300,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-y",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=2.0,
+    )
+    assert "zoompan=" in filt
+    assert "0.5*-0.900000*(2*on/" in filt
+
+
+def test_build_filter_motion_oversample_auto_scales_small_tiles() -> None:
+    filt, _ = tl._build_filter(
+        cols=6,
+        rows=1,
+        screen_w=600,
+        screen_h=120,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-x",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        tile_motion_oversample="auto",
+        duration=2.0,
+    )
+    # cell is 100x120; auto oversample for small tiles emits zoompan at 200x240.
+    assert "s=200x240" in filt
+    assert "force_original_aspect_ratio=decrease" in filt
+
+
+def test_build_filter_motion_oversample_manual_value_applied() -> None:
+    filt, _ = tl._build_filter(
+        cols=6,
+        rows=1,
+        screen_w=600,
+        screen_h=120,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-x",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        tile_motion_oversample="1.5",
+        duration=2.0,
+    )
+    assert "s=150x180" in filt
+
+
+def test_build_filter_motion_preserves_aspect_before_zoompan() -> None:
+    filt, _ = tl._build_filter(
+        cols=6,
+        rows=6,
+        screen_w=1920,
+        screen_h=1080,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="high",
+        tile_motion="axis-x",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        tile_motion_oversample="2.0",
+        duration=2.0,
+    )
+    # Aspect normalization should occur before zoompan for motion paths.
+    assert "force_original_aspect_ratio=decrease" in filt
+    assert "zoompan=" in filt

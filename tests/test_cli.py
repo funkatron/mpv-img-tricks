@@ -71,6 +71,23 @@ def test_validate_tile_parallax_auto_allowed_with_axis_alt() -> None:
     validate_live_args(args, p)
 
 
+def test_validate_tile_parallax_auto_allowed_with_axis_x() -> None:
+    p = build_parser()
+    args = p.parse_args(
+        [
+            "live",
+            "d",
+            "--effect",
+            "tile",
+            "--tile-motion",
+            "axis-x",
+            "--tile-parallax",
+            "auto",
+        ]
+    )
+    validate_live_args(args, p)
+
+
 def test_validate_tile_motion_strength_positive() -> None:
     p = build_parser()
     args = p.parse_args(
@@ -83,6 +100,25 @@ def test_validate_tile_motion_strength_positive() -> None:
             "ken-burns",
             "--tile-motion-strength",
             "0",
+        ]
+    )
+    with pytest.raises(SystemExit) as ex:
+        validate_live_args(args, p)
+    assert ex.value.code == 2
+
+
+def test_validate_tile_motion_oversample_rejects_less_than_one() -> None:
+    p = build_parser()
+    args = p.parse_args(
+        [
+            "live",
+            "d",
+            "--effect",
+            "tile",
+            "--tile-motion",
+            "axis-x",
+            "--tile-motion-oversample",
+            "0.5",
         ]
     )
     with pytest.raises(SystemExit) as ex:

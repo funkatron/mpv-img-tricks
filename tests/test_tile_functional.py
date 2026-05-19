@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from contextlib import redirect_stderr
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -155,7 +157,115 @@ def test_tile_live_axis_alt_uses_temporal_ffmpeg(
     ), redirect_stderr(buf):
         rc = main()
     assert rc == 0
+    s = buf.getvalue()
+    assert "msg=motion_sampling" in s
     log = stub_bin_dir.parent / "tool.log"
     t = log.read_text(encoding="utf-8", errors="replace")
     assert "ffmpeg" in t
     assert "zoompan=" in t
+
+
+def test_tile_live_skip_media_validate_shortcuts_ffprobe_phase(
+    two_image_dir,
+    repo_root,
+    stub_bin_dir,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(repo_root)
+    buf = StringIO()
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "slideshow",
+            "live",
+            str(two_image_dir),
+            "--effect",
+            "tile",
+            "--grid",
+            "2x2",
+            "--skip-media-validate",
+            "--duration",
+            "0.01",
+        ],
+    ), redirect_stderr(buf):
+        rc = main()
+    assert rc == 0
+    s = buf.getvalue()
+    assert "phase=validate-media msg=skipped reason=flag" in s
+
+    log = stub_bin_dir.parent / "tool.log"
+    out = log.read_text(encoding="utf-8", errors="replace")
+    # Startup skips ffprobe validation but still launches playback.
+    assert "mpv" in out
+    assert "ffprobe" not in out
+
+
+def test_tile_live_axis_x_single_row_writes_temporal_mp4_and_centered_motion(
+    two_image_dir,
+    repo_root,
+    stub_bin_dir,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(repo_root)
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "slideshow",
+            "live",
+            str(two_image_dir),
+            "--effect",
+            "tile",
+            "--grid",
+            "2x1",
+            "--tile-motion",
+            "axis-x",
+            "--duration",
+            "0.01",
+        ],
+    ):
+        rc = main()
+    assert rc == 0
+    log = stub_bin_dir.parent / "tool.log"
+    t = log.read_text(encoding="utf-8", errors="replace")
+    assert "ffmpeg" in t
+    assert "zoompan=" in t
+    assert "0.5*-0.900000*(2*on/" in t
+    cache_root = Path(os.environ["HOME"]) / ".cache" / "mpv-img-tricks" / "tile-fixed"
+    assert list(cache_root.rglob("*.mp4"))
+
+
+def test_tile_live_axis_y_single_row_writes_temporal_mp4_and_centered_motion(
+    two_image_dir,
+    repo_root,
+    stub_bin_dir,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(repo_root)
+    with patch.object(
+        sys,
+        "argv",
+        [
+            "slideshow",
+            "live",
+            str(two_image_dir),
+            "--effect",
+            "tile",
+            "--grid",
+            "2x1",
+            "--tile-motion",
+            "axis-y",
+            "--duration",
+            "0.01",
+        ],
+    ):
+        rc = main()
+    assert rc == 0
+    log = stub_bin_dir.parent / "tool.log"
+    t = log.read_text(encoding="utf-8", errors="replace")
+    assert "ffmpeg" in t
+    assert "zoompan=" in t
+    assert "0.5*-0.900000*(2*on/" in t
+    cache_root = Path(os.environ["HOME"]) / ".cache" / "mpv-img-tricks" / "tile-fixed"
+    assert list(cache_root.rglob("*.mp4"))

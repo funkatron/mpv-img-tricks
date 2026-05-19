@@ -87,6 +87,7 @@ A published wheel contains only the Python package. **Running the full tool stil
 | `MPV_IMG_TRICKS_NO_SLIDESHOW_BINDINGS` | If non-empty, **all** slideshow mpv launches skip auto-loading **`mpv-scripts/slideshow-bindings.lua`** (overrides `--use-slideshow-bindings yes` on **`mpv-pipeline.sh`**). |
 | `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE` | If non-empty, **`--effect tile`** validate-media does **not** read or write **`~/.cache/mpv-img-tricks/ffprobe-tile-v5`** (forces live **`ffprobe`** every run; use while debugging “everything skipped”). |
 | `MPV_IMG_TRICKS_FFPROBE_VALIDATE_DEBUG` | If non-empty, **`--effect tile`** prints extra **stderr** lines: **`ffprobe`** path/version and step-by-step probe errors for up to **five** skipped files. When **all** files are skipped, **three** samples run automatically (still **stderr**) so a broken install (e.g. invalid **`ffprobe`** flags) is obvious without setting this first. |
+| `MPV_IMG_TRICKS_TILE_INPUT_CAP` | Optional positive integer cap for max tile inputs per ffmpeg composite run. Lower values improve stability on very large grids (more, smaller slides); higher values can be faster if your ffmpeg build and system handle larger filtergraphs. |
 
 ## Optional JSON defaults
 
@@ -243,3 +244,7 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
   `MPV_IMG_TRICKS_NO_FFPROBE_TILE_CACHE=1 slideshow … --effect tile …`
 - If it still skips all paths, test one file:  
   `ffprobe -v error -i /path/to/one/image` — non-zero exit means **ffprobe/ffmpeg** cannot read that media (corrupt format, permissions, or missing codecs).
+
+**Tile log shows `cache_hit` but no `job_schedule`**
+
+- **`cache_hit`** means composites for that cache key already exist; ffmpeg compositing is skipped, so **`job_schedule`** does not appear. Add **`--clear-cache`** to the same **`slideshow live …`** command to clear **`tile-fixed`** / **`tile-randomized`** (and ffprobe tile caches) and force a **`cache_miss`** rebuild.
