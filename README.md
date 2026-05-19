@@ -188,14 +188,19 @@ Effect-specific:
   --max-files COUNT          Limit discovered files
   --recursive                Recurse into subdirectories
   --random-scale             Randomly alternate between fill and fit scaling
-  --tile-quality LEVEL       fast|balanced|high compositing preset (default: balanced)
+  --tile-quality LEVEL       fast|balanced|high compositing preset (default: high)
   --tile-safe-mode MODE      off|warn|auto large-grid safety policy (default: auto)
   --auto-ram-cap             Apply RAM-based worker cap (default)
   --no-auto-ram-cap          Disable RAM-based worker cap
   --tile-hwaccel MODE        Experimental tile hwaccel mode: off|auto (default: off)
+  --tile-motion MODE         off|ken-burns|axis-x|axis-y|axis-alt
+  --tile-parallax MODE       off|auto (requires tile-motion mode)
+  --tile-motion-strength N   Positive motion intensity scalar (default: 1.0)
+  --tile-motion-oversample V auto or numeric >=1.0 (default: auto)
 
 Diagnostics:
   --debug                    Print backend debug info
+  --skip-media-validate      Skip ffprobe validation for faster startup (trust sources)
 
 # full, current option list:
 ./slideshow live --help
@@ -241,6 +246,7 @@ Current limitation: `--watch` currently supports only a single instance (`--inst
 ./slideshow live ~/pics --effect tile --grid 10x6 --resolution 1280x720 --max-files 600
 ./slideshow live ~/pics --effect tile --grid 15x8 --resolution 1920x1080 --tile-quality balanced
 ./slideshow live ~/pics --effect tile --grid 20x10 --tile-safe-mode auto --tile-quality fast --max-files 600
+./slideshow live ~/pics --effect tile --grid 20x20 --skip-media-validate
 
 # Randomized tiling examples
 ./slideshow live ~/pics --effect tile --randomize --group-size 3 --duration 2
@@ -248,64 +254,21 @@ Current limitation: `--watch` currently supports only a single instance (`--inst
 ./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos
 ./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos --encoder hevc_videotoolbox
 ./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --animate-videos --tile-hwaccel auto
+
+# Motion-mode examples
+./slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
+./slideshow live ~/pics --effect tile --grid 3x3 --tile-motion axis-x --tile-motion-oversample 1.5 --duration 4
 ```
 
 ## Tile Effect Details
 
-The **tile** effect creates a live slideshow that displays multiple images simultaneously in a grid layout. It uses mpv's `hstack` and `vstack` filters.
+The **tile** effect pre-renders composite slides in Python/ffmpeg, then plays the result via mpv.
 
-### Features:
-- **Automatic screen detection** - Detects your screen resolution on macOS/Linux
-- **Ultrawide support** - Works with ultrawide resolutions (for example 3440x1440, 5120x1440)
-- **Live slideshow** - Images advance through the grid in real-time
-- **Animated video tiles** - Optional moving video playback inside each tile (`--animate-videos`)
-- **Flexible grid sizes** - Support for any grid configuration (1x3, 2x2, 3x2, etc.)
-- **Randomized layouts** - Different grid layouts for each group of images
-- **Group-based tiling** - Process images in customizable groups (`--group-size` as any positive integer)
-- **Quality/perf presets** - `--tile-quality fast|balanced|high` tunes scaling and encode presets
-- **Large-grid guardrails** - `--tile-safe-mode auto` downscales very large auto-resolution grids to keep memory lower
-- **RAM-aware worker clamp** - Enabled by default via `--auto-ram-cap` (disable with `--no-auto-ram-cap`)
+- For very small, simple grids (`paths <= grid`, spacing `0`, motion `off`), the runtime can take a direct mpv path.
+- For large grids and motion/animated paths, ffmpeg compositing is the primary path and includes worker caps plus large-grid guardrails.
+- Startup can skip ffprobe preflight with `--skip-media-validate` when you trust your source files.
 
-### Grid Options:
-- **1x3** - 3 columns x 1 row
-- **2x2** - 2 columns x 2 rows
-- **3x1** - 3 columns x 1 row
-- **3x2** - 3 columns x 2 rows
-- **4x1** - 4 columns x 1 row
-
-### Examples:
-```bash
-# 3x1 grid
-./slideshow live ~/pics --effect tile --grid 3x1 --duration 2
-
-# 2x2 grid
-./slideshow live ~/pics --effect tile --grid 2x2 --duration 3
-
-# 3x2 grid
-./slideshow live ~/pics --effect tile --grid 3x2 --duration 2.5
-
-# 4x1 grid
-./slideshow live ~/pics --effect tile --grid 4x1 --duration 1.5
-
-# Randomized tiling with different layouts per group
-./slideshow live ~/pics --effect tile --randomize --group-size 4 --duration 3
-
-# Small groups with random layouts
-./slideshow live ~/pics --effect tile --randomize --group-size 3 --duration 2
-
-# Animated MOV tiles (true motion inside each grid cell)
-./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.2 --animate-videos
-```
-
-### Randomized Tiling:
-When using `--randomize`, each group gets a random rectangular grid selected from a dynamic layout pool where `cols * rows <= group-size`.
-For example, with `--group-size 4`, layouts include combinations like `1x1`, `2x1`, `1x2`, `2x2`, `4x1`, and `1x4`.
-
-The tile effect automatically:
-- Detects your screen resolution using `system_profiler` (macOS) or `xrandr` (Linux)
-- Calculates optimal tile sizes for your display
-- Uses mpv's efficient `hstack`/`vstack` filters
-- Advances groups continuously as a slideshow
+Use `docs/setup.md` for full tile diagnostics, memory telemetry, and troubleshooting.
 
 ## Scale Modes (Current)
 
@@ -316,13 +279,10 @@ Scale mode semantics for the slideshow CLI:
 
 ## Future Plans
 
-Migration sequence:
+Current focus:
 
-- **Phase 1 (Unified CLI) — done:** `slideshow live` is the primary interface; Bash remains the execution backend behind `mpv_img_tricks`.
-- **Phase 2 (Runtime Parity)**: Port core runtime orchestration (playlist discovery, mpv/ffmpeg invocation, multi-instance controls, watch mode plumbing) to Python.
-- **Phase 3 (Behavior Cleanup)**: Simplify/normalize flags during the Python move where complexity is not useful.
-- **Phase 4 (Testing Expansion)**: Add smoke/integration checks for watch mode and multi-instance behavior on the Python path.
-- **Phase 5 (Watch Mode Improvement)**: Add best-effort multi-instance watch routing to instance 1 (followers may not mirror new files).
+- Continue behavior cleanup and docs alignment as more runtime orchestration lives in Python.
+- Expand smoke/integration coverage for watch mode and multi-instance workflows.
 
 ## Warning
 Some effects may cause seizures. Use responsibly!

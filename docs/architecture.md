@@ -36,7 +36,11 @@ slideshow (CLI) -> mpv_img_tricks.cli
 | `mpv_img_tricks/cli.py` | CLI args, validation, default subcommand behavior |
 | `mpv_img_tricks/pipelines/live.py` | Live dispatch to basic vs tile |
 | `mpv_img_tricks/pipelines/basic_slideshow.py` | Basic live flow |
-| `mpv_img_tricks/pipelines/tile_live.py` | Tile discovery, validation, compositing, cache, mpv launch |
+| `mpv_img_tricks/pipelines/tile_live.py` | Tile orchestration: discovery, validation, scheduling, compositing, cache, mpv launch |
+| `mpv_img_tricks/pipelines/tile/caching.py` | Tile cache/probe key derivation and source manifest hashing |
+| `mpv_img_tricks/pipelines/tile/filter_graph.py` | ffmpeg filtergraph builders for still and temporal tile paths |
+| `mpv_img_tricks/pipelines/tile/motion.py` | Tile motion modes (`ken-burns`, `axis-x`, `axis-y`, `axis-alt`) and zoompan helpers |
+| `mpv_img_tricks/pipelines/tile/scheduling.py` | Worker caps (`cpu`/`tile`/`ram`) and layout splitting |
 | `mpv_img_tricks/pipelines/plain_render.py` | Plain render (`--render` without `--effect`) |
 | `mpv_img_tricks/mpv_pipeline.py` | mpv argv and multi-instance/master-control helpers |
 | `docs/setup.md` | User-facing setup and operations guidance |
@@ -48,15 +52,19 @@ slideshow (CLI) -> mpv_img_tricks.cli
 
 - Discovery + validation:
   - source discovery in Python
-  - `ffprobe` validation with cache `~/.cache/mpv-img-tricks/ffprobe-tile-v5`
+  - optional `ffprobe` validation with cache `~/.cache/mpv-img-tricks/ffprobe-tile-v5` (skip with `--skip-media-validate`)
 - Composite cache:
   - fixed: `~/.cache/mpv-img-tricks/tile-fixed`
   - randomized: `~/.cache/mpv-img-tricks/tile-randomized`
+- Temporal tile motion:
+  - still-motion modes `ken-burns`, `axis-x`, `axis-y`, `axis-alt` render short MP4 slides
 - Worker scheduling:
   - caps: `cpu_cap`, `tile_cap`, optional RAM clamp (`--auto-ram-cap`)
   - logs include `job_schedule ... limit_reason=...`
+- Large-grid guardrails:
+  - per-slide ffmpeg fan-in cap (default hard cap 64; env override `MPV_IMG_TRICKS_TILE_INPUT_CAP`)
+  - `--tile-safe-mode off|warn|auto` can auto-downscale large, non-explicit resolutions
 - Safety/perf controls:
-  - `--tile-safe-mode off|warn|auto`
   - `--tile-quality fast|balanced|high`
   - `--tile-hwaccel off|auto` (animated tiles; experimental)
 

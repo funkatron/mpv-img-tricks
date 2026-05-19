@@ -13,7 +13,7 @@ Concise orientation for coding assistants. End-user install and flags: [docs/set
 - Users run **`slideshow`** (e.g. `./slideshow` after `uv sync`, or `uv run slideshow`). Do not document **`scripts/*.sh`** as primary entrypoints.
 - Routing summary:
   - **`live`** + **`basic`** → Python **`mpv_img_tricks.pipelines.basic_slideshow`** (+ **`mpv_pipeline`**)
- - **`live`** + **`tile`** → `mpv_img_tricks/pipelines/tile_live.py`
+  - **`live`** + **`tile`** → `mpv_img_tricks/pipelines/tile_live.py`
   - **`--render`** (no **`--effect`**) → Python **`plain_render`** (not `images-to-video.sh` from the CLI)
   - **`--effect`** with **`--render`** is rejected
 
@@ -22,10 +22,12 @@ Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks
 ## Tile performance controls (current)
 
 - `mpv_img_tricks/pipelines/tile_live.py` is the tile runtime; behavior is tuned through CLI flags in `mpv_img_tricks/cli.py`.
+- Startup can skip ffprobe preflight with `--skip-media-validate` when source files are trusted.
 - Worker scheduling now uses `cpu_cap`, `tile_cap`, and optional RAM clamp (`--auto-ram-cap` on by default; disable with `--no-auto-ram-cap`).
 - `job_schedule` logs include `limit_reason` (`cpu`, `tile`, `ram`, or ties such as `tile+ram`) to show which cap constrained workers.
-- Temporal slides (Ken Burns / `axis-alt` / `--animate-videos`) use a **higher `ram_bytes_per_worker`** in `job_schedule`, so `ram_cap_candidate` is usually **lower** than for still JPEG slides; **`mem_baseline`** and periodic **`phase=compositing-mem`** log approximate host **`avail_mb`** and driver **`rss_parent_mb`** (see [docs/setup.md](docs/setup.md)).
+- Temporal slides (Ken Burns / `axis-x` / `axis-y` / `axis-alt` / `--animate-videos`) use a **higher `ram_bytes_per_worker`** in `job_schedule`, so `ram_cap_candidate` is usually **lower** than for still JPEG slides; **`mem_baseline`** and periodic **`phase=compositing-mem`** log approximate host **`avail_mb`** and driver **`rss_parent_mb`** (see [docs/setup.md](docs/setup.md)).
 - Large-grid safety policy is controlled by `--tile-safe-mode` (`auto` / `warn` / `off`).
+- Per-slide ffmpeg fan-in is capped (default hard cap `64`) and can be tuned with `MPV_IMG_TRICKS_TILE_INPUT_CAP`.
 - Compositing quality/perf tradeoffs are controlled by `--tile-quality` (`fast` / `balanced` / `high`).
 - Animated tile path has experimental hwaccel toggle `--tile-hwaccel` (`off` / `auto`); `auto` is usually faster but can raise peak RSS.
 
@@ -37,7 +39,11 @@ Defaults (e.g. duration **2.0**): `scripts/lib/constants.sh` and `mpv_img_tricks
 | `mpv_img_tricks/pipelines/plain_render.py` | Plain flipbook render |
 | `mpv_img_tricks/pipelines/live.py` | Dispatch: basic vs tile |
 | `mpv_img_tricks/pipelines/basic_slideshow.py` | Basic live: discovery, watch, mpv |
-| `mpv_img_tricks/pipelines/tile_live.py` | Tile: Python discovery/validate/composite/cache + mpv launch |
+| `mpv_img_tricks/pipelines/tile_live.py` | Tile orchestration: discovery/validate/composite/cache + mpv launch |
+| `mpv_img_tricks/pipelines/tile/caching.py` | Cache and probe key helpers for tile paths |
+| `mpv_img_tricks/pipelines/tile/filter_graph.py` | ffmpeg filtergraph builders for still and temporal tile modes |
+| `mpv_img_tricks/pipelines/tile/motion.py` | Motion-mode helpers (`ken-burns`, `axis-x`, `axis-y`, `axis-alt`) |
+| `mpv_img_tricks/pipelines/tile/scheduling.py` | Worker sizing and layout scheduling/caps |
 | `mpv_img_tricks/mpv_pipeline.py` | **mpv** argv / multi-instance / master bridge (was **mpv-pipeline.sh**) |
 | `mpv_img_tricks/paths.py` | Resolve repo root / `scripts/` (`MPV_IMG_TRICKS_ROOT`, `MPV_IMG_TRICKS_SCRIPTS_DIR`) |
 | `scripts/mpv-pipeline.sh` | Shared mpv launch (scaling, instances, flags) |

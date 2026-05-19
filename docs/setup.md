@@ -120,7 +120,7 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 | Mode | Meaning of `--duration` |
 |------|-------------------------|
 | **basic** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
-| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate-videos`**) or **temporal tile motion** (**`--tile-motion ken-burns`** or **`axis-alt`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
+| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate-videos`**) or **temporal tile motion** (**`--tile-motion ken-burns`**, **`axis-x`**, **`axis-y`**, or **`axis-alt`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
 
 ### Plain render (`--render` without `--effect`)
 
@@ -164,10 +164,10 @@ Suggested diff checklist:
 
 For `--effect tile` (and similar compositing paths), work is not silent: phases are printed on stderr with the prefix `mpv-img-tricks:` when `--quiet` is not set. Rough order:
 
-1. **validate-media** — Optional `ffprobe` pass over the playlist (progress lines every 25 files for large sets).
+1. **validate-media** — Optional `ffprobe` pass over the playlist (progress lines every 25 files for large sets). Use **`--skip-media-validate`** when startup speed matters and you trust the library.
 2. **probe-encoders** — With `--animate-videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
 3. **prepare-audio** — Optional silence trim via ffmpeg when `--sound` is set.
-4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). **`job_schedule`** includes **`temporal_composite`** and **`ram_bytes_per_worker`**: when **`true`** (Ken Burns, **`axis-alt`**, or **`--animate-videos`**), each concurrent encode is budgeted **more RAM headroom**, so **`ram_cap_candidate`** is usually **smaller** than for still-JPEG slides — fewer workers in flight to reduce swap / lockups on large libraries. With default settings, the RAM candidate participates in worker clamping; **`--no-auto-ram-cap`** removes that clamp (can increase pressure — only if you accept the risk). Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
+4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). **`job_schedule`** includes **`temporal_composite`** and **`ram_bytes_per_worker`**: when **`true`** (Ken Burns, **`axis-x`**, **`axis-y`**, **`axis-alt`**, or **`--animate-videos`**), each concurrent encode is budgeted **more RAM headroom**, so **`ram_cap_candidate`** is usually **smaller** than for still-JPEG slides — fewer workers in flight to reduce swap / lockups on large libraries. With default settings, the RAM candidate participates in worker clamping; **`--no-auto-ram-cap`** removes that clamp (can increase pressure — only if you accept the risk). Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
 
    **Host memory snapshots:** right after **`job_schedule`**, **`mem_baseline`** logs approximate **`avail_mb`** (Linux **`MemAvailable`**; macOS **`vm_stat`** free+inactive pages — a rough hint) and **`rss_parent_mb`** for the **slideshow driver process** (from **`ps`**, not each `ffmpeg` child). During compositing, **`phase=compositing-mem`** repeats on a coarse schedule with the same fields so you can watch pressure while slides render. Use **`2>&1 | tee`** to capture both progress and memory lines.
 
@@ -175,19 +175,27 @@ If screen size detection fails (no usable `system_profiler` / `xrandr`), tile la
 
 For large grids, tile safety defaults to `--tile-safe-mode auto`: if resolution is not explicit and the detected display is larger than 1280x720, very large grids are downscaled to a safer working resolution. Use `--tile-safe-mode warn` to keep current behavior with a recommendation log, or `--tile-safe-mode off` to disable it entirely.
 
-Use `--tile-quality fast|balanced|high` to tune compositing quality/performance trade-offs:
+Large grids also apply a per-slide ffmpeg input cap to avoid decoder/filtergraph failures from extremely wide fan-in. The default hard cap is **64** inputs per composite slide (`msg=input_cap_applied` in logs). Override with **`MPV_IMG_TRICKS_TILE_INPUT_CAP`** to tune for your host.
+
+Use `--tile-quality fast|balanced|high` to tune compositing quality/performance trade-offs (default: **high**):
 
 - `fast` — lower-quality JPEG and faster scaler flags.
-- `balanced` — default quality/perf compromise.
+- `balanced` — middle quality/perf compromise.
 - `high` — higher-quality scaler flags and slower encode presets.
 
 `--tile-hwaccel auto` enables an experimental hardware-acceleration path for animated tiles (`--animate-videos`) by requesting ffmpeg decode hwaccel and preferring VideoToolbox encoding on macOS when `--encoder auto` is used. In local A/B testing this mode was faster but had a slightly higher peak RSS; use `off` when minimizing memory is more important than speed. Keep `--tile-hwaccel off` (default) for the most predictable cross-platform behavior.
 
-### Tile motion (Ken Burns and axis-alt)
+### Tile motion
 
-- **`--tile-motion off|ken-burns|axis-alt`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking. **`ken-burns`** combines diagonal-style drift (with optional **`--tile-parallax auto`** variation). **`axis-alt`** alternates **pure axis** pan by column: even columns move **only on X**, odd columns **only on Y** (constant zoom so the path is a straight line). Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
-- **`--tile-parallax off|auto`** (default **`off`**): flip / vary pan direction in a deterministic way. **`--tile-parallax auto` requires `--tile-motion ken-burns` or `axis-alt`**.
+- **`--tile-motion off|ken-burns|axis-x|axis-y|axis-alt`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking.
+  - **`ken-burns`**: pan + zoom with deterministic per-tile variation.
+  - **`axis-x`**: row-based horizontal drift (even rows left, odd rows right).
+  - **`axis-y`**: row-based vertical drift (even rows up, odd rows down).
+  - **`axis-alt`**: row-based diagonal drift (applies axis-x and axis-y together).
+  Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
+- **`--tile-parallax off|auto`** (default **`off`**): keeps the mode direction stable but varies pan magnitude per tile when set to **`auto`**. Requires `--tile-motion` to be set to a non-`off` mode.
 - **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`2.0`** for tuning. Motion is rendered at **60 fps** inside each slide clip and the MP4 encoder uses the **same frame rate** so frames are not dropped to 30 fps (which looked choppy). Longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
+- **`--tile-motion-oversample`** (default **`auto`**): controls sampling resolution before final fit/fill in motion paths. Use numeric values **>=1.0** (for example `1.5` or `2.0`) when you want smoother motion at higher CPU cost.
 
 Example:
 
@@ -195,7 +203,7 @@ Example:
 uv run slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
 ```
 
-Column-alternating drift:
+Row-based diagonal drift:
 
 ```bash
 uv run slideshow live ~/pics --effect tile --grid 3x3 --tile-motion axis-alt --tile-parallax auto --duration 4
@@ -248,3 +256,17 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
 **Tile log shows `cache_hit` but no `job_schedule`**
 
 - **`cache_hit`** means composites for that cache key already exist; ffmpeg compositing is skipped, so **`job_schedule`** does not appear. Add **`--clear-cache`** to the same **`slideshow live …`** command to clear **`tile-fixed`** / **`tile-randomized`** (and ffprobe tile caches) and force a **`cache_miss`** rebuild.
+
+**Tile compositing fails with `Too many open files` or `Resource temporarily unavailable`**
+
+- Keep default input fan-in cap (64) unless you have evidence your host tolerates more.
+- Lower cap for stability on very large grids:  
+  `MPV_IMG_TRICKS_TILE_INPUT_CAP=48 slideshow live … --effect tile …`
+- If startup time is the bottleneck, keep the cap but skip probe preflight for trusted libraries:  
+  `slideshow live … --effect tile --skip-media-validate`
+
+**`--watch` leaves stray `fswatch` processes**
+
+- Current `main` cleans up watch subprocesses when playback exits.
+- If you still see strays after upgrading, stop them manually and confirm you are on an updated checkout:  
+  `pkill -f 'fswatch.*<your-watch-path>'`
