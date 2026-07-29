@@ -349,7 +349,7 @@ def test_ffmpeg_codec_still_motion_mp4_matches_zoompan_fps() -> None:
     assert cmd[cmd.index("-r") + 1] == str(tl._TILE_MOTION_ZOOMPAN_FPS)
 
 
-def test_ffmpeg_codec_animate_videos_mp4_stays_at_30fps() -> None:
+def test_ffmpeg_codec_animate_videos_mp4_uses_60fps() -> None:
     args = Namespace(
         animate_videos=True,
         duration="2.0",
@@ -359,7 +359,22 @@ def test_ffmpeg_codec_animate_videos_mp4_stays_at_30fps() -> None:
         tile_motion="off",
     )
     cmd = tl._ffmpeg_codec_args(args, out_ext=".mp4")
-    assert cmd[cmd.index("-r") + 1] == "30"
+    assert cmd[cmd.index("-r") + 1] == str(tl._TILE_MOTION_ZOOMPAN_FPS)
+
+
+def test_ffmpeg_codec_animate_with_axis_motion_matches_zoompan_fps() -> None:
+    """--animate still pans must encode at zoompan fps even when animate_videos is on."""
+    args = Namespace(
+        animate_videos=True,
+        duration="2.0",
+        encoder="auto",
+        tile_hwaccel="off",
+        tile_quality="balanced",
+        tile_motion="axis-x",
+        tile_parallax="off",
+    )
+    cmd = tl._ffmpeg_codec_args(args, out_ext=".mp4")
+    assert cmd[cmd.index("-r") + 1] == str(tl._TILE_MOTION_ZOOMPAN_FPS)
 
 
 def test_cache_key_changes_with_tile_hwaccel_mode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -591,16 +606,16 @@ def test_build_filter_axis_x_row_direction() -> None:
     assert n == 4
     assert "zoompan=" in filt
     z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
-    z2 = next(s for s in filt.split(";") if s.startswith("[2:v]"))
-    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
-    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
-    mx2 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
-    my2 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
-    # Row 0 (tile 0): left; row 1 (tile 2): right.
+    z1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
+    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    mx1 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    my1 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    # Adjacent tiles alternate: tile 0 left, tile 1 right.
     assert mx0 < -0.2
     assert abs(my0) < 1e-9
-    assert mx2 > 0.2
-    assert abs(my2) < 1e-9
+    assert mx1 > 0.2
+    assert abs(my1) < 1e-9
     z0z = re.search(r"zoompan=z='([^']+)'", z0).group(1)
     assert "on" not in z0z
 
@@ -622,16 +637,16 @@ def test_build_filter_axis_y_row_direction() -> None:
         duration=2.0,
     )
     z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
-    z2 = next(s for s in filt.split(";") if s.startswith("[2:v]"))
-    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
-    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
-    mx2 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
-    my2 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
-    # Row 0 (tile 0): up; row 1 (tile 2): down.
+    z1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
+    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    mx1 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    my1 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    # Adjacent tiles alternate: tile 0 up, tile 1 down.
     assert abs(mx0) < 1e-9
     assert my0 < -0.2
-    assert abs(mx2) < 1e-9
-    assert my2 > 0.2
+    assert abs(mx1) < 1e-9
+    assert my1 > 0.2
 
 
 def test_build_filter_axis_alt_combines_x_and_y_row_direction() -> None:
@@ -651,19 +666,43 @@ def test_build_filter_axis_alt_combines_x_and_y_row_direction() -> None:
         duration=2.0,
     )
     z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
-    z2 = next(s for s in filt.split(";") if s.startswith("[2:v]"))
-    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
-    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z0).group(1))
-    mx2 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
-    my2 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*\(2\*on/\d+-1\)[^']*'", z2).group(1))
-    # axis-alt now applies both axis-x and axis-y rules.
+    z1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
+    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    mx1 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    my1 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    # Adjacent tiles alternate diagonally.
     assert mx0 < -0.2 and my0 < -0.2
-    assert mx2 > 0.2 and my2 > 0.2
+    assert mx1 > 0.2 and my1 > 0.2
     z0z = re.search(r"zoompan=z='([^']+)'", z0).group(1)
     assert "on" not in z0z
 
 
-def test_build_filter_axis_x_single_row_keeps_motion_expression() -> None:
+def test_build_filter_skips_motion_on_video_inputs() -> None:
+    filt, _ = tl._build_filter(
+        cols=2,
+        rows=1,
+        screen_w=640,
+        screen_h=360,
+        spacing=0,
+        scale_mode="fit",
+        tile_quality="balanced",
+        tile_motion="axis-x",
+        tile_parallax="off",
+        tile_motion_strength=1.0,
+        duration=2.0,
+        input_is_video=[True, False],
+    )
+    v0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
+    v1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
+    assert "zoompan=" not in v0
+    assert f"fps={tl._TILE_MOTION_ZOOMPAN_FPS}" in v0
+    assert "zoompan=" in v1
+
+
+def test_build_filter_axis_x_single_row_alternates_direction() -> None:
+    import re
+
     filt, _ = tl._build_filter(
         cols=3,
         rows=1,
@@ -678,10 +717,20 @@ def test_build_filter_axis_x_single_row_keeps_motion_expression() -> None:
         duration=2.0,
     )
     assert "zoompan=" in filt
-    assert "0.5*-0.900000*(2*on/" in filt
+    z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
+    z1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
+    z2 = next(s for s in filt.split(";") if s.startswith("[2:v]"))
+    mx0 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    mx1 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    mx2 = float(re.search(r"x='[^']*0\.5\*([0-9.-]+)\*", z2).group(1))
+    assert mx0 < -0.2
+    assert mx1 > 0.2
+    assert mx2 < -0.2
 
 
-def test_build_filter_axis_y_single_row_keeps_motion_expression() -> None:
+def test_build_filter_axis_y_single_row_alternates_direction() -> None:
+    import re
+
     filt, _ = tl._build_filter(
         cols=3,
         rows=1,
@@ -696,7 +745,12 @@ def test_build_filter_axis_y_single_row_keeps_motion_expression() -> None:
         duration=2.0,
     )
     assert "zoompan=" in filt
-    assert "0.5*-0.900000*(2*on/" in filt
+    z0 = next(s for s in filt.split(";") if s.startswith("[0:v]"))
+    z1 = next(s for s in filt.split(";") if s.startswith("[1:v]"))
+    my0 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z0).group(1))
+    my1 = float(re.search(r"y='[^']*0\.5\*([0-9.-]+)\*", z1).group(1))
+    assert my0 < -0.2
+    assert my1 > 0.2
 
 
 def test_build_filter_motion_oversample_auto_scales_small_tiles() -> None:

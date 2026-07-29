@@ -31,7 +31,7 @@ def test_tile_perf_flags_have_expected_defaults() -> None:
     assert args.tile_quality == "high"
     assert args.tile_safe_mode == "auto"
     assert args.auto_ram_cap is True
-    assert args.tile_hwaccel == "off"
+    assert args.tile_hwaccel == "auto"
 
 
 def test_tile_perf_flags_can_be_overridden() -> None:
@@ -48,13 +48,13 @@ def test_tile_perf_flags_can_be_overridden() -> None:
             "off",
             "--no-auto-ram-cap",
             "--tile-hwaccel",
-            "auto",
+            "off",
         ]
     )
     assert args.tile_quality == "fast"
     assert args.tile_safe_mode == "off"
     assert args.auto_ram_cap is False
-    assert args.tile_hwaccel == "auto"
+    assert args.tile_hwaccel == "off"
 
 
 def test_tile_motion_flags_have_expected_defaults() -> None:
@@ -114,7 +114,33 @@ def test_tile_motion_axis_y_parse() -> None:
     assert args.tile_motion == "axis-y"
 
 
-def test_skip_media_validate_flag_parse() -> None:
+def test_media_validate_flag_parse() -> None:
     parser = cli.build_parser()
-    args = parser.parse_args(["live", "fixtures/images", "--effect", "tile", "--skip-media-validate"])
-    assert args.skip_media_validate is True
+    args = parser.parse_args(["live", "fixtures/images", "--effect", "tile", "--media-validate"])
+    assert args.media_validate is True
+
+
+def test_animate_preset_sets_tile_video_and_axis_motion() -> None:
+    parser = cli.build_parser()
+    argv = ["live", "fixtures/images", "--grid", "3x1", "--animate"]
+    args = parser.parse_args(argv)
+    cli.apply_animate_preset(args, argv)
+    assert args.effect == "tile"
+    assert args.animate_videos is True
+    assert args.tile_motion == "axis-x"
+
+
+def test_animate_preset_uses_axis_y_for_tall_grid() -> None:
+    parser = cli.build_parser()
+    argv = ["live", "fixtures/images", "--grid", "1x3", "--animate"]
+    args = parser.parse_args(argv)
+    cli.apply_animate_preset(args, argv)
+    assert args.tile_motion == "axis-y"
+
+
+def test_animate_preset_respects_explicit_tile_motion() -> None:
+    parser = cli.build_parser()
+    argv = ["live", "fixtures/images", "--grid", "3x1", "--animate", "--tile-motion", "ken-burns"]
+    args = parser.parse_args(argv)
+    cli.apply_animate_preset(args, argv)
+    assert args.tile_motion == "ken-burns"

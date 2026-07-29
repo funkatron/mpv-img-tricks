@@ -25,6 +25,14 @@ def _tile_slide_outputs_mp4(args: Namespace) -> bool:
     return bool(args.animate_videos) or _tile_motion_needs_temporal_slides(args)
 
 
+def _pan_progress_expr(dm1: int, *, eased: bool) -> str:
+    """Normalized pan progress in [-1, 1] over the clip (linear or smoothstep)."""
+    if eased:
+        t = f"(on/{dm1})"
+        return f"(2*({t})*({t})*(3-2*{t})-1)"
+    return f"(2*on/{dm1}-1)"
+
+
 def _zoompan_linear_pan(
     cell_w: int,
     cell_h: int,
@@ -34,8 +42,9 @@ def _zoompan_linear_pan(
     px: float,
     py: float,
     fixed_zoom: bool = False,
+    eased: bool = False,
 ) -> str:
-    """Pan using output frame index ``on`` (linear in time).
+    """Pan using output frame index ``on``.
 
     The pan path is centered around the frame midpoint so negative directions
     still move (instead of clamping at x=0/y=0 for the whole clip).
@@ -46,6 +55,7 @@ def _zoompan_linear_pan(
     strength = max(float(strength), 0.05)
     px = max(-1.0, min(1.0, float(px))) * _TILE_MOTION_SPEED
     py = max(-1.0, min(1.0, float(py))) * _TILE_MOTION_SPEED
+    progress = _pan_progress_expr(dm1, eased=eased)
     if fixed_zoom:
         z_raw = min(1.04 + 0.07 * strength, 1.16)
         z_fix = 1.0 + (z_raw - 1.0) * _TILE_MOTION_SPEED
@@ -53,8 +63,8 @@ def _zoompan_linear_pan(
     else:
         z_delta = min(0.06 + 0.12 * strength, 0.28) * _TILE_MOTION_SPEED
         z_expr = f"1+{z_delta:.6f}*on/{dm1}"
-    x_pos = f"max(0,min(1,0.5+0.5*{px:.6f}*(2*on/{dm1}-1)))"
-    y_pos = f"max(0,min(1,0.5+0.5*{py:.6f}*(2*on/{dm1}-1)))"
+    x_pos = f"max(0,min(1,0.5+0.5*{px:.6f}*{progress}))"
+    y_pos = f"max(0,min(1,0.5+0.5*{py:.6f}*{progress}))"
     x_expr = f"(iw-iw/zoom)*{x_pos}"
     y_expr = f"(ih-ih/zoom)*{y_pos}"
     return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={d}:s={cell_w}x{cell_h}:fps={fps}"
@@ -76,12 +86,14 @@ def _zoompan_ken_burns(
     else:
         px = 0.88
         py = 0.38
-    return _zoompan_linear_pan(cell_w, cell_h, duration=duration, strength=strength, px=px, py=py)
+    return _zoompan_linear_pan(
+        cell_w, cell_h, duration=duration, strength=strength, px=px, py=py
+    )
 
 
-def _row_pan_sign(row: int) -> float:
-    """Even rows move negative (left/up), odd rows move positive (right/down)."""
-    return -1.0 if (row % 2) == 0 else 1.0
+def _tile_alternate_sign(tile_index: int) -> float:
+    """Even-index tiles drift negative (left/up); odd-index tiles drift positive (right/down)."""
+    return -1.0 if (tile_index % 2) == 0 else 1.0
 
 
 def _parallax_multiplier(tile_index: int, parallax: str) -> float:
@@ -118,10 +130,9 @@ def _zoompan_axis_x(
     strength: float,
     parallax: str,
 ) -> str:
-    """Row-based horizontal drift: even rows left, odd rows right."""
-    row = tile_index // max(cols, 1)
+    """Horizontal drift; adjacent tiles move in opposite directions."""
     m = _parallax_multiplier(tile_index, parallax)
-    px = _row_pan_sign(row) * 0.9 * m
+    px = _tile_alternate_sign(tile_index) * 0.9 * m
     py = 0.0
     return _zoompan_linear_pan(
         cell_w,
@@ -144,11 +155,10 @@ def _zoompan_axis_y(
     strength: float,
     parallax: str,
 ) -> str:
-    """Row-based vertical drift: even rows up, odd rows down."""
-    row = tile_index // max(cols, 1)
+    """Vertical drift; adjacent tiles move in opposite directions."""
     m = _parallax_multiplier(tile_index, parallax)
     px = 0.0
-    py = _row_pan_sign(row) * 0.9 * m
+    py = _tile_alternate_sign(tile_index) * 0.9 * m
     return _zoompan_linear_pan(
         cell_w,
         cell_h,
@@ -170,10 +180,9 @@ def _zoompan_axis_alt(
     strength: float,
     parallax: str,
 ) -> str:
-    """Row-based diagonal drift: apply both axis-x and axis-y directions together."""
-    row = tile_index // max(cols, 1)
+    """Diagonal drift; adjacent tiles move in opposite directions on both axes."""
     m = _parallax_multiplier(tile_index, parallax)
-    s = _row_pan_sign(row)
+    s = _tile_alternate_sign(tile_index)
     px = s * 0.9 * m
     py = s * 0.9 * m
     return _zoompan_linear_pan(

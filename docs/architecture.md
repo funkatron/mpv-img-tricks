@@ -52,7 +52,7 @@ slideshow (CLI) -> mpv_img_tricks.cli
 
 - Discovery + validation:
   - source discovery in Python
-  - optional `ffprobe` validation with cache `~/.cache/mpv-img-tricks/ffprobe-tile-v5` (skip with `--skip-media-validate`)
+  - optional `ffprobe` validation with cache `~/.cache/mpv-img-tricks/ffprobe-tile-v5` (opt-in with `--media-validate`)
 - Composite cache:
   - fixed: `~/.cache/mpv-img-tricks/tile-fixed`
   - randomized: `~/.cache/mpv-img-tricks/tile-randomized`
@@ -66,7 +66,7 @@ slideshow (CLI) -> mpv_img_tricks.cli
   - `--tile-safe-mode off|warn|auto` can auto-downscale large, non-explicit resolutions
 - Safety/perf controls:
   - `--tile-quality fast|balanced|high`
-  - `--tile-hwaccel off|auto` (animated tiles; experimental)
+  - `--tile-hwaccel off|auto` (animated tiles; default `auto`)
 
 ---
 

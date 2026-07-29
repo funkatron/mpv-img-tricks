@@ -164,7 +164,7 @@ Suggested diff checklist:
 
 For `--effect tile` (and similar compositing paths), work is not silent: phases are printed on stderr with the prefix `mpv-img-tricks:` when `--quiet` is not set. Rough order:
 
-1. **validate-media** — Optional `ffprobe` pass over the playlist (progress lines every 25 files for large sets). Use **`--skip-media-validate`** when startup speed matters and you trust the library.
+1. **validate-media** — Skipped by default (`phase=validate-media msg=skipped reason=default`). Pass **`--media-validate`** to run an `ffprobe` pass over the playlist (progress lines every 25 files for large sets) and drop unreadable files before compositing.
 2. **probe-encoders** — With `--animate-videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
 3. **prepare-audio** — Optional silence trim via ffmpeg when `--sound` is set.
 4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). **`job_schedule`** includes **`temporal_composite`** and **`ram_bytes_per_worker`**: when **`true`** (Ken Burns, **`axis-x`**, **`axis-y`**, **`axis-alt`**, or **`--animate-videos`**), each concurrent encode is budgeted **more RAM headroom**, so **`ram_cap_candidate`** is usually **smaller** than for still-JPEG slides — fewer workers in flight to reduce swap / lockups on large libraries. With default settings, the RAM candidate participates in worker clamping; **`--no-auto-ram-cap`** removes that clamp (can increase pressure — only if you accept the risk). Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
@@ -183,7 +183,7 @@ Use `--tile-quality fast|balanced|high` to tune compositing quality/performance 
 - `balanced` — middle quality/perf compromise.
 - `high` — higher-quality scaler flags and slower encode presets.
 
-`--tile-hwaccel auto` enables an experimental hardware-acceleration path for animated tiles (`--animate-videos`) by requesting ffmpeg decode hwaccel and preferring VideoToolbox encoding on macOS when `--encoder auto` is used. In local A/B testing this mode was faster but had a slightly higher peak RSS; use `off` when minimizing memory is more important than speed. Keep `--tile-hwaccel off` (default) for the most predictable cross-platform behavior.
+`--tile-hwaccel auto` (default) enables hardware acceleration for animated tiles (`--animate-videos`): ffmpeg decode hwaccel and VideoToolbox encoding on macOS when `--encoder auto` is used. Use `--tile-hwaccel off` when minimizing memory is more important than speed or you want software encoding everywhere.
 
 ### Tile motion
 
@@ -194,7 +194,7 @@ Use `--tile-quality fast|balanced|high` to tune compositing quality/performance 
   - **`axis-alt`**: row-based diagonal drift (applies axis-x and axis-y together).
   Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
 - **`--tile-parallax off|auto`** (default **`off`**): keeps the mode direction stable but varies pan magnitude per tile when set to **`auto`**. Requires `--tile-motion` to be set to a non-`off` mode.
-- **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`2.0`** for tuning. Motion is rendered at **60 fps** inside each slide clip and the MP4 encoder uses the **same frame rate** so frames are not dropped to 30 fps (which looked choppy). Longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
+- **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`2.0`** for tuning. Animated tile MP4 slides (motion and **`--animate-videos`**) encode at **60 fps** to match zoompan output and avoid dropped frames. Longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
 - **`--tile-motion-oversample`** (default **`auto`**): controls sampling resolution before final fit/fill in motion paths. Use numeric values **>=1.0** (for example `1.5` or `2.0`) when you want smoother motion at higher CPU cost.
 
 Example:
@@ -268,8 +268,7 @@ This project is **pre-alpha**. Breaking CLI or default-behavior changes are acce
 - Keep default input fan-in cap (64) unless you have evidence your host tolerates more.
 - Lower cap for stability on very large grids:  
   `MPV_IMG_TRICKS_TILE_INPUT_CAP=48 slideshow live … --effect tile …`
-- If startup time is the bottleneck, keep the cap but skip probe preflight for trusted libraries:  
-  `slideshow live … --effect tile --skip-media-validate`
+- ffprobe preflight is skipped by default; add **`--media-validate`** only when you need to filter bad files before compositing.
 
 **`--watch` leaves stray `fswatch` processes**
 

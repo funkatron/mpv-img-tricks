@@ -259,9 +259,9 @@ def _ffprobe_ok(path: str) -> bool:
     return proc.returncode == 0
 
 
-def _validate_media(paths: list[str], *, quiet: bool, skip_probe: bool = False) -> tuple[list[str], int]:
+def _validate_media(paths: list[str], *, quiet: bool, skip_probe: bool = True) -> tuple[list[str], int]:
     if skip_probe:
-        _phase("phase=validate-media msg=skipped reason=flag", quiet=quiet)
+        _phase("phase=validate-media msg=skipped reason=default", quiet=quiet)
         return paths, 0
     if shutil.which("ffprobe") is None:
         _phase("phase=validate-media msg=ffprobe_missing skipping_probe=true", quiet=quiet)
@@ -433,8 +433,7 @@ def _apply_large_grid_safe_resolution(
 def _ffmpeg_codec_args(args: Namespace, *, out_ext: str) -> list[str]:
     tile_quality = str(getattr(args, "tile_quality", "balanced"))
     motion_mp4 = _tile_motion_needs_temporal_slides(args) and out_ext.lower() == ".mp4"
-    # Ken Burns / axis-alt: zoompan runs at _TILE_MOTION_ZOOMPAN_FPS; -r 30 was decimating → chunky motion.
-    encode_r = str(_TILE_MOTION_ZOOMPAN_FPS) if (motion_mp4 and not bool(args.animate_videos)) else "30"
+    encode_r = str(_TILE_MOTION_ZOOMPAN_FPS)
     if not args.animate_videos and not motion_mp4:
         if out_ext == ".png":
             return ["-frames:v", "1", "-c:v", "png"]
@@ -456,7 +455,7 @@ def _animated_encoder(args: Namespace) -> str:
     enc = str(getattr(args, "encoder", "auto") or "auto")
     if enc != "auto":
         return enc
-    if str(getattr(args, "tile_hwaccel", "off")) == "auto" and sys.platform == "darwin":
+    if str(getattr(args, "tile_hwaccel", "auto")) == "auto" and sys.platform == "darwin":
         return "hevc_videotoolbox"
     return "libx264"
 
@@ -465,7 +464,7 @@ def _ffmpeg_hwaccel_args(args: Namespace) -> list[str]:
     """Experimental decode hwaccel toggle for animated tiles."""
     if not bool(getattr(args, "animate_videos", False)):
         return []
-    if str(getattr(args, "tile_hwaccel", "off")) != "auto":
+    if str(getattr(args, "tile_hwaccel", "auto")) != "auto":
         return []
     return ["-hwaccel", "auto"]
 
@@ -490,7 +489,10 @@ def _render_slide(out_file: Path, inputs: list[str], filter_complex: str, args: 
         if temporal_stills and not _is_video(item):
             cmd.extend(["-loop", "1", "-t", str(args.duration), "-i", item])
         elif _is_video(item):
-            cmd.extend(["-ss", "0.25", "-i", item])
+            if temporal_stills:
+                cmd.extend(["-ss", "0.25", "-t", str(args.duration), "-i", item])
+            else:
+                cmd.extend(["-ss", "0.25", "-i", item])
         else:
             cmd.extend(["-i", item])
     cmd.extend(["-filter_complex", filter_complex, "-map", "[out]"])
@@ -520,6 +522,8 @@ def _composite_one_slide(
     args: Namespace,
 ) -> bool:
     per_slide = ccols * crows
+    inputs = [paths[min(cursor_start + i, len(paths) - 1)] for i in range(per_slide)]
+    input_is_video = [_is_video(p) for p in inputs]
     filt, _n = _build_filter(
         cols=ccols,
         rows=crows,
@@ -533,8 +537,8 @@ def _composite_one_slide(
         tile_motion_strength=float(getattr(args, "tile_motion_strength", 1.0)),
         tile_motion_oversample=str(getattr(args, "tile_motion_oversample", "auto")),
         duration=float(args.duration),
+        input_is_video=input_is_video,
     )
-    inputs = [paths[min(cursor_start + i, len(paths) - 1)] for i in range(per_slide)]
     out_file = out_dir / f"{slide_idx:04d}{ext}"
     return _render_slide(out_file, inputs, filt, args)
 
@@ -682,7 +686,7 @@ def run_tile_live(args: Namespace) -> int:
     paths, skipped = _validate_media(
         paths,
         quiet=bool(args.quiet),
-        skip_probe=bool(getattr(args, "skip_media_validate", False)),
+        skip_probe=not bool(getattr(args, "media_validate", False)),
     )
     if skipped and not args.quiet:
         print(f"[{_now_stamp()}] Skipped {skipped} unreadable media file(s).", file=sys.stderr)
@@ -710,7 +714,7 @@ def run_tile_live(args: Namespace) -> int:
     )
     _phase(f"phase=screen msg=resolved size={screen_w}x{screen_h}", quiet=bool(args.quiet))
     if bool(args.animate_videos):
-        hw_mode = str(getattr(args, "tile_hwaccel", "off"))
+        hw_mode = str(getattr(args, "tile_hwaccel", "auto"))
         _phase(
             f"phase=compositing-{'randomized' if bool(args.randomize) else 'fixed'} "
             f"msg=hwaccel mode={hw_mode} encoder={_animated_encoder(args)}",

@@ -7,6 +7,7 @@ and plain ``--render`` uses Python + ffmpeg.
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
 import shutil
 import sys
@@ -101,6 +102,14 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--group-size", type=int, help="Randomized tile group size")
     parser.add_argument("--randomize", action="store_true", help="Randomize tile layouts")
     parser.add_argument(
+        "--animate",
+        action="store_true",
+        help=(
+            "Animated tile slideshow: enables tile mode, plays video tiles, and pans stills "
+            "with alternating axis motion (horizontal for wide grids, vertical for tall grids)"
+        ),
+    )
+    parser.add_argument(
         "--animate-videos",
         action="store_true",
         help="Animate tile videos instead of stills",
@@ -156,8 +165,8 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--tile-hwaccel",
         choices=["off", "auto"],
-        default="off",
-        help="Experimental tile hwaccel for animated tiles; auto is usually faster but may use more RAM (default: off)",
+        default="auto",
+        help="Tile hwaccel for animated tiles; auto uses ffmpeg hwaccel and prefers VideoToolbox on macOS (default: auto)",
     )
     parser.add_argument(
         "--tile-motion",
@@ -166,9 +175,9 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Per-tile motion during compositing; uses short MP4 slides when not --animate-videos (default: off). "
             "ken-burns: pan+zoom on a deterministic subset of tiles; "
-            "axis-x: even rows drift left, odd rows right; "
-            "axis-y: even rows drift up, odd rows down; "
-            "axis-alt: combines axis-x and axis-y."
+            "axis-x: adjacent tiles drift left/right in alternation; "
+            "axis-y: adjacent tiles drift up/down in alternation; "
+            "axis-alt: diagonal drift with alternating tile directions."
         ),
     )
     parser.add_argument(
@@ -216,9 +225,9 @@ def add_diagnostic_args(parser: argparse.ArgumentParser) -> None:
         help="Remove mpv-img-tricks caches under ~/.cache/mpv-img-tricks/ (ffprobe validate + tile composites), then run",
     )
     parser.add_argument(
-        "--skip-media-validate",
+        "--media-validate",
         action="store_true",
-        help="Skip ffprobe media validation for faster tile startup (trust source files)",
+        help="Run ffprobe over the playlist before compositing (slow on large libraries; default: skip)",
     )
 
 
@@ -278,7 +287,39 @@ def build_plain_render_dry_run_line(args: Namespace) -> str:
     )
 
 
+def _argv_has_option(argv: list[str], name: str) -> bool:
+    prefix = f"{name}="
+    return any(token == name or token.startswith(prefix) for token in argv)
+
+
+def _default_tile_motion_for_grid(grid: str | None) -> str:
+    raw = grid or "2x2"
+    match = re.fullmatch(r"(\d+)x(\d+)", raw)
+    if not match:
+        return "axis-x"
+    cols, rows = int(match.group(1)), int(match.group(2))
+    return "axis-x" if cols >= rows else "axis-y"
+
+
+def apply_animate_preset(args: Namespace, argv: list[str]) -> None:
+    """Expand ``--animate`` into tile + video playback + axis motion defaults."""
+    if not getattr(args, "animate", False):
+        return
+    if args.effect is None:
+        args.effect = "tile"
+    if not _argv_has_option(argv, "--animate-videos"):
+        args.animate_videos = True
+    if not _argv_has_option(argv, "--tile-motion") and getattr(args, "tile_motion", "off") == "off":
+        args.tile_motion = _default_tile_motion_for_grid(getattr(args, "grid", None))
+
+
 def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None:
+    if getattr(args, "animate", False):
+        if args.render:
+            parser.error("--animate cannot be combined with --render")
+        if args.effect not in (None, "tile"):
+            parser.error("--animate requires tile mode (omit --effect or use --effect tile)")
+
     if args.master_control and args.no_master_control:
         parser.error("choose either --master-control or --no-master-control")
 
@@ -386,6 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  slideshow live ~/pics",
             "  slideshow ~/pics --fill",
             "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
+            "  slideshow ~/pics --grid 3x1 --animate --fill",
             "  slideshow ~/pics --render --output out.mp4",
             "",
             f'If the first argument is not a subcommand name, "{DEFAULT_SUBCOMMAND}" '
@@ -405,6 +447,7 @@ def main() -> int:
     if argv and argv[0] not in SUBCOMMAND_NAMES:
         argv = [DEFAULT_SUBCOMMAND, *argv]
     args = parser.parse_args(argv)
+    apply_animate_preset(args, argv)
     args.resolution_explicit = args.resolution is not None
     if args.resolution is None:
         args.resolution = DEFAULT_RESOLUTION

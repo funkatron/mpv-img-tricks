@@ -46,7 +46,7 @@ def _build_cache_key(
         f"effect={effect}\nmanifest={manifest}\nscreen={screen_w}x{screen_h}\n"
         f"duration={args.duration}\nscale={args.scale_mode}\nspacing={args.spacing or 0}\n"
         f"animate={args.animate_videos}\nencoder={args.encoder}\nresolved_encoder={resolved_encoder}\n"
-        f"tile_hwaccel={getattr(args, 'tile_hwaccel', 'off')}\n"
+        f"tile_hwaccel={getattr(args, 'tile_hwaccel', 'auto')}\n"
         f"tile_quality={getattr(args, 'tile_quality', 'balanced')}\n"
         f"tile_motion={getattr(args, 'tile_motion', 'off')}\n"
         f"tile_parallax={getattr(args, 'tile_parallax', 'off')}\n"

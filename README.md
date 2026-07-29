@@ -181,6 +181,7 @@ Effect-specific:
   --spacing PIXELS           Tile spacing in pixels
   --group-size COUNT         Number of images per randomized tile group
   --randomize                Randomize tile layouts
+  --animate                  Animated tiles: video playback + alternating still pan
   --animate-videos           Animate video tiles instead of using still composites
   --encoder NAME             auto|hevc_videotoolbox|libx265|libx264
   --sound FILE               Play sound file during slideshow playback
@@ -192,7 +193,7 @@ Effect-specific:
   --tile-safe-mode MODE      off|warn|auto large-grid safety policy (default: auto)
   --auto-ram-cap             Apply RAM-based worker cap (default)
   --no-auto-ram-cap          Disable RAM-based worker cap
-  --tile-hwaccel MODE        Experimental tile hwaccel mode: off|auto (default: off)
+  --tile-hwaccel MODE        Tile hwaccel mode: off|auto (default: auto)
   --tile-motion MODE         off|ken-burns|axis-x|axis-y|axis-alt
   --tile-parallax MODE       off|auto (requires tile-motion mode)
   --tile-motion-strength N   Positive motion intensity scalar (default: 1.0)
@@ -200,7 +201,7 @@ Effect-specific:
 
 Diagnostics:
   --debug                    Print backend debug info
-  --skip-media-validate      Skip ffprobe validation for faster startup (trust sources)
+  --media-validate           Run ffprobe validation before compositing (default: skip)
 
 # full, current option list:
 ./slideshow live --help
@@ -246,14 +247,13 @@ Current limitation: `--watch` currently supports only a single instance (`--inst
 ./slideshow live ~/pics --effect tile --grid 10x6 --resolution 1280x720 --max-files 600
 ./slideshow live ~/pics --effect tile --grid 15x8 --resolution 1920x1080 --tile-quality balanced
 ./slideshow live ~/pics --effect tile --grid 20x10 --tile-safe-mode auto --tile-quality fast --max-files 600
-./slideshow live ~/pics --effect tile --grid 20x20 --skip-media-validate
+./slideshow live ~/pics --effect tile --grid 20x20
 
 # Randomized tiling examples
 ./slideshow live ~/pics --effect tile --randomize --group-size 3 --duration 2
 ./slideshow live ~/pics --effect tile --randomize --group-size 5 --duration 4
-./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos
-./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --duration 1.5 --animate-videos --encoder hevc_videotoolbox
-./slideshow live "~/videos/*.mov" --effect tile --randomize --group-size 4 --animate-videos --tile-hwaccel auto
+./slideshow live ~/pics --effect tile --grid 3x1 --animate --fill
+./slideshow live "~/videos/*.mov" --effect tile --grid 3x1 --animate-videos --fill
 
 # Motion-mode examples
 ./slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
@@ -266,7 +266,7 @@ The **tile** effect pre-renders composite slides in Python/ffmpeg, then plays th
 
 - For very small, simple grids (`paths <= grid`, spacing `0`, motion `off`), the runtime can take a direct mpv path.
 - For large grids and motion/animated paths, ffmpeg compositing is the primary path and includes worker caps plus large-grid guardrails.
-- Startup can skip ffprobe preflight with `--skip-media-validate` when you trust your source files.
+- Startup skips ffprobe preflight by default; use `--media-validate` to filter unreadable files before compositing.
 
 Use `docs/setup.md` for full tile diagnostics, memory telemetry, and troubleshooting.
 
