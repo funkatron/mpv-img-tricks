@@ -33,6 +33,7 @@ tmp/
 # Allow tracked fixtures even when generic media patterns exist below
 !fixtures/
 !fixtures/**/*
+fixtures/**/.DS_Store
 
 # Python / uv
 .venv/
