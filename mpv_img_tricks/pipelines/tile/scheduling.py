@@ -13,7 +13,7 @@ _TILE_COMPOSITE_TILE_BUDGET = 28
 _RAM_CAP_RESERVE_BYTES = 4 * 1024 * 1024 * 1024
 # Still JPEG composites: one ffmpeg tends to stay below this RSS band in practice.
 _RAM_CAP_BYTES_PER_WORKER_STILL = int(1.25 * 1024 * 1024 * 1024)
-# Temporal slides (Ken Burns, axis-*, --animate-videos): encode + filtergraph peak higher.
+# Temporal slides (Ken Burns, parallax, --animate): encode + filtergraph peak higher.
 _RAM_CAP_BYTES_PER_WORKER_TEMPORAL = int(2.25 * 1024 * 1024 * 1024)
 # Back-compat name for tests / external grep (still path default).
 _RAM_CAP_BYTES_PER_WORKER = _RAM_CAP_BYTES_PER_WORKER_STILL

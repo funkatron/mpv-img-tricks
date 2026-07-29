@@ -97,9 +97,15 @@ Examples:
 
 ## Available modes
 
-- **basic** (default) — sequential live slideshow in Python (**subprocess `mpv`**; see **`mpv_img_tricks/pipelines/basic_slideshow.py`**)
-- **tile** — live tiled grid via `mpv_img_tricks.pipelines.tile_live` (Python runtime)
-- **`--render`** — flipbook export via **`mpv_img_tricks`** (`plain_render`); **`--effect` is not allowed** with **`--render`**
+Live playback has two modes. You almost never need to write **`--effect basic`**.
+
+- **basic** (default) — one full-screen image at a time via mpv. Omit **`--effect`** (or pass **`--effect basic`**, which is the same thing and rarely useful to spell out).
+- **tile** — grid of many images per slide (`--effect tile`, or implied by **`--animate`** / **`--grid`** in common recipes).
+
+**`--render`:**
+- plain flipbook: **`--render`** alone (no tile/animate) → **`plain_render`**
+- tile export: **`--animate --render`** or **`--effect tile --render`** → composites then ffmpeg concat to **`--output`**
+- basic + **`--render`** is rejected (use plain **`--render`** without **`--effect`**)
 
 ## Implementation note
 
@@ -170,19 +176,18 @@ Playback/display:
   --order MODE               natural | om | nm (deterministic order; default natural)
 
 Render/video:
-  --render                   Render a flipbook video instead of launching live playback (Python + ffmpeg)
+  --render                   Write video instead of live play (plain flipbook or tile/animate export)
   --output FILE              Output path for render mode
   --resolution SIZE          Output resolution (default: 1920x1080)
   --img-per-sec COUNT        Images per second for plain render mode
 
 Effect-specific:
-  --effect NAME              basic|tile (live only; not with --render)
+  --effect NAME              basic|tile (default: basic — omit the flag; use tile for grids)
   --grid SIZE                Tile grid size
   --spacing PIXELS           Tile spacing in pixels
   --group-size COUNT         Number of images per randomized tile group
   --randomize                Randomize tile layouts
-  --animate                  Animated tiles: video playback + alternating still pan
-  --animate-videos           Animate video tiles instead of using still composites
+  --animate [videos]         Animated tiles: videos + parallax stills; pass "videos" for video-only
   --encoder NAME             auto|hevc_videotoolbox|libx265|libx264
   --sound FILE               Play sound file during slideshow playback
   --sound-trim-db DB         Leading silence trim threshold in dB
@@ -194,10 +199,7 @@ Effect-specific:
   --auto-ram-cap             Apply RAM-based worker cap (default)
   --no-auto-ram-cap          Disable RAM-based worker cap
   --tile-hwaccel MODE        Tile hwaccel mode: off|auto (default: auto)
-  --tile-motion MODE         off|ken-burns|axis-x|axis-y|axis-alt
-  --tile-parallax MODE       off|auto (requires tile-motion mode)
-  --tile-motion-strength N   Positive motion intensity scalar (default: 1.0)
-  --tile-motion-oversample V auto or numeric >=1.0 (default: auto)
+  --tile-motion MODE         off|ken-burns|parallax
 
 Diagnostics:
   --debug                    Print backend debug info
@@ -253,13 +255,13 @@ Current limitation: `--watch` currently supports only a single instance (`--inst
 ./slideshow live ~/pics --effect tile --randomize --group-size 3 --duration 2
 ./slideshow live ~/pics --effect tile --randomize --group-size 5 --duration 4
 ./slideshow live ~/pics --effect tile --grid 3x1 --animate --fill
-./slideshow live "~/videos/*.mov" --effect tile --grid 3x1 --animate-videos --fill
+./slideshow live ~/pics --effect tile --grid 3x1 --animate --render --output animated.mp4
+./slideshow live "~/videos/*.mov" --effect tile --grid 3x1 --animate videos --fill
 
 # Motion-mode examples
-./slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
-./slideshow live ~/pics --effect tile --grid 3x3 --tile-motion axis-x --tile-motion-oversample 1.5 --duration 4
+./slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --duration 3
+./slideshow live ~/pics --effect tile --grid 3x3 --tile-motion parallax --duration 4
 ```
-
 ## Tile Effect Details
 
 The **tile** effect pre-renders composite slides in Python/ffmpeg, then plays the result via mpv.
@@ -267,6 +269,7 @@ The **tile** effect pre-renders composite slides in Python/ffmpeg, then plays th
 - For very small, simple grids (`paths <= grid`, spacing `0`, motion `off`), the runtime can take a direct mpv path.
 - For large grids and motion/animated paths, ffmpeg compositing is the primary path and includes worker caps plus large-grid guardrails.
 - Startup skips ffprobe preflight by default; use `--media-validate` to filter unreadable files before compositing.
+- Multi-slide runs start mpv after the first composite is ready (remaining slides encode in the background). Large animated grids may auto-apply cheaper encode settings; watch `encode-policy` / `progressive_start` lines on stderr.
 
 Use `docs/setup.md` for full tile diagnostics, memory telemetry, and troubleshooting.
 
@@ -289,5 +292,5 @@ Some slideshow effects can include rapid motion, flashes, or high-contrast chang
 
 For safer defaults:
 - Use longer `--duration` values.
-- Keep motion features (`--tile-motion`, `--animate-videos`) off unless needed.
+- Keep motion features (`--tile-motion`, `--animate`) off unless needed.
 - Avoid running motion-heavy presets around people who may be photosensitive unless they have opted in.

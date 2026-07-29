@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 
 
-def send_json(socket_path: str, json_payload: str) -> None:
+def send_json(socket_path: str, json_payload: str) -> bool:
+    """Send one JSON IPC line. Returns True on connect+send success."""
     try:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(0.6)
@@ -17,8 +19,9 @@ def send_json(socket_path: str, json_payload: str) -> None:
         except OSError:
             pass
         client.close()
+        return True
     except OSError:
-        pass
+        return False
 
 
 def get_property(socket_path: str, prop_name: str) -> str:
@@ -41,3 +44,13 @@ def get_property(socket_path: str, prop_name: str) -> str:
         return str(value)
     except OSError:
         return ""
+
+
+def wait_until_ready(socket_path: str, *, timeout_s: float = 30.0, poll_s: float = 0.05) -> bool:
+    """True when the IPC socket accepts connections and answers a property query."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if get_property(socket_path, "pid"):
+            return True
+        time.sleep(poll_s)
+    return False

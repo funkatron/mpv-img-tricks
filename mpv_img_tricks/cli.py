@@ -7,7 +7,6 @@ and plain ``--render`` uses Python + ffmpeg.
 from __future__ import annotations
 
 import argparse
-import re
 import shlex
 import shutil
 import sys
@@ -84,7 +83,11 @@ def add_live_only_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_render_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--render", action="store_true", help="Render to a video instead of live playback")
+    parser.add_argument(
+        "--render",
+        action="store_true",
+        help="Write a video file instead of live playback (plain flipbook, or tile/animate export)",
+    )
     parser.add_argument("--output", help="Output file path for render mode")
     # Keep `None` when omitted so runtime can distinguish defaulted vs explicit CLI value.
     parser.add_argument("--resolution", default=None, help="Output resolution")
@@ -96,23 +99,26 @@ def add_render_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_effect_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--effect", choices=LIVE_EFFECT_CHOICES, help="Effect modifier (live only)")
+    parser.add_argument(
+        "--effect",
+        choices=LIVE_EFFECT_CHOICES,
+        help="Live mode: basic (default one-at-a-time slideshow; omit this flag) or tile (grid). Prefer omitting --effect for basic.",
+    )
     parser.add_argument("--grid", help="Tile grid size")
     parser.add_argument("--spacing", help="Tile spacing in pixels")
     parser.add_argument("--group-size", type=int, help="Randomized tile group size")
     parser.add_argument("--randomize", action="store_true", help="Randomize tile layouts")
     parser.add_argument(
         "--animate",
-        action="store_true",
+        nargs="?",
+        const="full",
+        default=None,
+        choices=["full", "videos"],
         help=(
-            "Animated tile slideshow: enables tile mode, plays video tiles, and pans stills "
-            "with alternating axis motion (horizontal for wide grids, vertical for tall grids)"
+            "Animated tile slideshow: enables tile mode and plays video tiles. "
+            "Bare --animate also pans stills with parallax. "
+            "Use --animate videos for video playback only (no still pan)."
         ),
-    )
-    parser.add_argument(
-        "--animate-videos",
-        action="store_true",
-        help="Animate tile videos instead of stills",
     )
     parser.add_argument(
         "--encoder",
@@ -170,34 +176,12 @@ def add_effect_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--tile-motion",
-        choices=["off", "ken-burns", "axis-x", "axis-y", "axis-alt"],
+        choices=["off", "ken-burns", "parallax"],
         default="off",
         help=(
-            "Per-tile motion during compositing; uses short MP4 slides when not --animate-videos (default: off). "
+            "Per-tile still motion during compositing; uses short MP4 slides (default: off). "
             "ken-burns: pan+zoom on a deterministic subset of tiles; "
-            "axis-x: adjacent tiles drift left/right in alternation; "
-            "axis-y: adjacent tiles drift up/down in alternation; "
-            "axis-alt: diagonal drift with alternating tile directions."
-        ),
-    )
-    parser.add_argument(
-        "--tile-parallax",
-        choices=["off", "auto"],
-        default="off",
-        help="With tile motion, vary pan magnitude per tile (deterministic; default: off); requires a tile motion mode",
-    )
-    parser.add_argument(
-        "--tile-motion-strength",
-        type=float,
-        default=1.0,
-        help="Scale Ken Burns motion intensity (default: 1.0; try 0.5–1.5)",
-    )
-    parser.add_argument(
-        "--tile-motion-oversample",
-        default="auto",
-        help=(
-            "Motion sampling scale before final tile fit/fill (default: auto). "
-            "Use values >=1.0 (e.g. 1.5, 2.0); higher is smoother but slower."
+            "parallax: each tile pans on one axis — row0 is Y,X,Y…; each next row swaps to X,Y,X…"
         ),
     )
 
@@ -292,55 +276,30 @@ def _argv_has_option(argv: list[str], name: str) -> bool:
     return any(token == name or token.startswith(prefix) for token in argv)
 
 
-def _default_tile_motion_for_grid(grid: str | None) -> str:
-    raw = grid or "2x2"
-    match = re.fullmatch(r"(\d+)x(\d+)", raw)
-    if not match:
-        return "axis-x"
-    cols, rows = int(match.group(1)), int(match.group(2))
-    return "axis-x" if cols >= rows else "axis-y"
-
-
 def apply_animate_preset(args: Namespace, argv: list[str]) -> None:
-    """Expand ``--animate`` into tile + video playback + axis motion defaults."""
-    if not getattr(args, "animate", False):
+    """Expand ``--animate`` / ``--animate videos`` into tile + video (+ optional parallax)."""
+    mode = getattr(args, "animate", None)
+    if mode is None:
+        args.animate_videos = False
         return
     if args.effect is None:
         args.effect = "tile"
-    if not _argv_has_option(argv, "--animate-videos"):
-        args.animate_videos = True
-    if not _argv_has_option(argv, "--tile-motion") and getattr(args, "tile_motion", "off") == "off":
-        args.tile_motion = _default_tile_motion_for_grid(getattr(args, "grid", None))
+    args.animate_videos = True
+    if mode == "full":
+        if not _argv_has_option(argv, "--tile-motion") and getattr(args, "tile_motion", "off") == "off":
+            args.tile_motion = "parallax"
 
 
 def validate_live_args(args: Namespace, parser: argparse.ArgumentParser) -> None:
-    if getattr(args, "animate", False):
-        if args.render:
-            parser.error("--animate cannot be combined with --render")
+    if getattr(args, "animate", None) is not None:
         if args.effect not in (None, "tile"):
             parser.error("--animate requires tile mode (omit --effect or use --effect tile)")
 
     if args.master_control and args.no_master_control:
         parser.error("choose either --master-control or --no-master-control")
 
-    if getattr(args, "effect", None) == "tile":
-        tm = getattr(args, "tile_motion", "off")
-        if getattr(args, "tile_parallax", "off") == "auto" and tm == "off":
-            parser.error("--tile-parallax auto requires --tile-motion to be set (not off)")
-
-    if getattr(args, "tile_motion_strength", 1.0) <= 0:
-        parser.error("--tile-motion-strength must be positive")
-    tos = str(getattr(args, "tile_motion_oversample", "auto")).strip().lower()
-    if tos != "auto":
-        try:
-            parsed = float(tos)
-        except ValueError:
-            parser.error("--tile-motion-oversample must be 'auto' or a number >= 1.0")
-        if parsed < 1.0:
-            parser.error("--tile-motion-oversample must be >= 1.0")
-
-    if args.render and args.effect:
-        parser.error("--effect cannot be combined with --render (use plain --render only)")
+    if args.render and args.effect and args.effect != "tile":
+        parser.error("--effect with --render is only supported for tile (e.g. --animate --render)")
 
     if args.watch and args.render:
         parser.error("--watch cannot be combined with --render")
@@ -365,7 +324,7 @@ def handle_live(args: Namespace, parser: argparse.ArgumentParser) -> int:
         clear_mpv_img_tricks_tool_caches(quiet=args.quiet)
 
     if args.dry_run:
-        if args.render:
+        if args.render and (args.effect or "basic") != "tile":
             print(build_plain_render_dry_run_line(args))
             return 0
         line = format_live_dry_run(args)
@@ -375,7 +334,7 @@ def handle_live(args: Namespace, parser: argparse.ArgumentParser) -> int:
         print(line)
         return 0
 
-    if args.render:
+    if args.render and (args.effect or "basic") != "tile":
         return dispatch_plain_render(args)
 
     return dispatch_live(args)
@@ -393,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run a slideshow from an image directory or glob",
         description=(
             "Run a live slideshow by default. Use --effect tile for tiling, "
-            "or add --render to export a flipbook video (no --effect)."
+            "--animate for animated tiles, or --render for flipbook/tile export."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -428,6 +387,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  slideshow ~/pics --fill",
             "  slideshow live ~/pics --effect tile --grid 2x2 --randomize",
             "  slideshow ~/pics --grid 3x1 --animate --fill",
+            "  slideshow ~/pics --grid 3x1 --animate --render --output out.mp4",
+            "  slideshow ~/pics --grid 3x1 --animate videos --fill",
             "  slideshow ~/pics --render --output out.mp4",
             "",
             f'If the first argument is not a subcommand name, "{DEFAULT_SUBCOMMAND}" '
@@ -449,6 +410,7 @@ def main() -> int:
     args = parser.parse_args(argv)
     apply_animate_preset(args, argv)
     args.resolution_explicit = args.resolution is not None
+    args.tile_quality_explicit = _argv_has_option(argv, "--tile-quality")
     if args.resolution is None:
         args.resolution = DEFAULT_RESOLUTION
     return args.handler(args, args.parser)

@@ -38,6 +38,15 @@ That creates `.venv/` and installs this project in **editable** mode (see `uv.lo
 
 **Default subcommand:** **`live`** — you may run **`slideshow ~/pics`** (or **`./slideshow ~/pics`**) instead of **`slideshow live ~/pics`** as long as the first argument is not a different subcommand name. Behavior is defined in **`mpv_img_tricks/cli.py`** (`DEFAULT_SUBCOMMAND`, `SUBCOMMAND_NAMES`).
 
+### `--effect` (basic vs tile)
+
+| Value | Meaning |
+|-------|---------|
+| *(omit)* / **`basic`** | Default: one full-screen image at a time in mpv. Writing **`--effect basic`** is valid but redundant — prefer omitting **`--effect`**. |
+| **`tile`** | Grid slideshow (ffmpeg composites). Also implied by **`--animate`**. |
+
+Plain **`--render`** (flipbook) does not use **`--effect`**. Tile export uses **`--effect tile --render`** or **`--animate --render`**.
+
 **Sources:** Pass **one or more** positional **`SOURCE`** arguments (directories, image files, or glob patterns). Results are merged in order, deduplicated by real path, then ordered with **`--order`**: **`natural`** (version sort of paths, default), **`om`** (oldest modification time first), or **`nm`** (newest first). **`--shuffle`** overrides deterministic ordering (random playback). **`--watch`** requires **exactly one** directory source. Plain **`--render`** (flipbook) accepts the same multiple sources; **`scripts/images-to-video.sh`** also supports the legacy **`dir img_per_sec resolution output`** four-argument form when the second argument looks numeric and the third looks like **`1920x1080`**.
 
 **Package names:** PyPI-style name is `mpv-img-tricks`; Python import is `mpv_img_tricks`.
@@ -119,12 +128,16 @@ CLI flag **`--duration`** / **`-d`**: values are **seconds** (decimals allowed, 
 
 | Mode | Meaning of `--duration` |
 |------|-------------------------|
-| **basic** | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
-| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate-videos`**) or **temporal tile motion** (**`--tile-motion ken-burns`**, **`axis-x`**, **`axis-y`**, or **`axis-alt`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
+| **basic** (default; omit `--effect`) | **Time each image stays on screen** in mpv (passed through the shared pipeline as image display duration). |
+| **tile** | **Time each slide is shown**: mpv uses **`--image-display-duration`** for both the lavfi path and the playlist of pre-rendered composites. For **animated** tile segments (**`--animate`** / **`--animate videos`**) or **temporal tile motion** (**`--tile-motion ken-burns`** or **`parallax`**), ffmpeg also uses **`--duration`** as **`-t`** (seconds) per short composite clip. |
 
-### Plain render (`--render` without `--effect`)
+### Plain render (`--render` without tile/animate)
 
 Plain flipbook export runs in **Python** (`mpv_img_tricks.pipelines.plain_render`) and paces frames with **`--img-per-sec`**, not **`--duration`**. The **`--duration`** flag does not control per-image timing on that path. (The legacy script **`images-to-video.sh`** is still in the repo but is not invoked by the **`slideshow`** CLI.)
+
+### Tile / animate render (`--animate --render` or `--effect tile --render`)
+
+Composites tile slides as in live mode, then concatenates them with ffmpeg into **`--output`** (default **`tile-slideshow.mp4`**). Does not launch mpv. Use **`--duration`** for per-slide clip length (same as live tile).
 
 ## mpv keyboard shortcuts
 
@@ -165,9 +178,12 @@ Suggested diff checklist:
 For `--effect tile` (and similar compositing paths), work is not silent: phases are printed on stderr with the prefix `mpv-img-tricks:` when `--quiet` is not set. Rough order:
 
 1. **validate-media** — Skipped by default (`phase=validate-media msg=skipped reason=default`). Pass **`--media-validate`** to run an `ffprobe` pass over the playlist (progress lines every 25 files for large sets) and drop unreadable files before compositing.
-2. **probe-encoders** — With `--animate-videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
+2. **probe-encoders** — With `--animate videos`, lists ffmpeg encoders to pick VideoToolbox / fallback.
 3. **prepare-audio** — Optional silence trim via ffmpeg when `--sound` is set.
-4. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). **`job_schedule`** includes **`temporal_composite`** and **`ram_bytes_per_worker`**: when **`true`** (Ken Burns, **`axis-x`**, **`axis-y`**, **`axis-alt`**, or **`--animate-videos`**), each concurrent encode is budgeted **more RAM headroom**, so **`ram_cap_candidate`** is usually **smaller** than for still-JPEG slides — fewer workers in flight to reduce swap / lockups on large libraries. With default settings, the RAM candidate participates in worker clamping; **`--no-auto-ram-cap`** removes that clamp (can increase pressure — only if you accept the risk). Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
+4. **encode-policy** (temporal + large grids only) — When a slide has **40+** tiles and output is temporal (motion and/or **`--animate`**), the runtime may fit resolution inside **1920×1080** when **`--resolution`** was not explicit (`phase=encode-policy msg=auto_applied … reason=large_temporal_grid`). It does **not** auto-lower `--tile-quality` (that hurts manga/line-art aliasing). Pass `--resolution` yourself to lock native size.
+5. **compositing-fixed** or **compositing-randomized** — Many short `ffmpeg` runs build slide composites (`-loglevel` rises with `--verbose-ffmpeg` or `--debug`). Concurrency is **bounded**: stderr includes a **`job_schedule`** line with `cpu_cap`, `tile_cap`, and RAM telemetry (`ram_cap_candidate` / `installed_ram_bytes`) plus whether `auto_ram_cap` is active. It also prints `limit_reason` so you can see which cap actually limited workers (`cpu`, `tile`, `ram`, or a tie like `tile+ram`). **`job_schedule`** includes **`temporal_composite`** and **`ram_bytes_per_worker`**: when **`true`** (Ken Burns, **`parallax`**, or **`--animate`**), each concurrent encode is budgeted **more RAM headroom**, so **`ram_cap_candidate`** is usually **smaller** than for still-JPEG slides — fewer workers in flight to reduce swap / lockups on large libraries. With default settings, the RAM candidate participates in worker clamping; **`--no-auto-ram-cap`** removes that clamp (can increase pressure — only if you accept the risk). Slides are scheduled with at most that many workers in flight. Progress uses a carriage return on a TTY; when stderr is not a TTY (e.g. `2>&1 | tee log.txt`), newline status lines are emitted periodically.
+
+   **Progressive playback (time-to-first-frame):** with more than one slide and a single mpv instance, the runtime encodes **slide 0 first**, starts mpv (`phase=playback msg=progressive_start … reason=ttff`), and keeps compositing later slides in the background, appending them to the playlist over IPC (`phase=playback msg=playlist_append … playlist_count=N`). Watch for `msg=slide_start` / `msg=slide_done` while mpv is open (tee stderr if fullscreen hides the terminal). Remaining slides keep the same encoder/hwaccel settings as slide 0 (including VideoToolbox when selected). A **`COMPLETE`** marker is written under the cache dir only when every slide finished successfully; incomplete dirs are treated as cache misses on the next run.
 
    **Host memory snapshots:** right after **`job_schedule`**, **`mem_baseline`** logs approximate **`avail_mb`** (Linux **`MemAvailable`**; macOS **`vm_stat`** free+inactive pages — a rough hint) and **`rss_parent_mb`** for the **slideshow driver process** (from **`ps`**, not each `ffmpeg` child). During compositing, **`phase=compositing-mem`** repeats on a coarse schedule with the same fields so you can watch pressure while slides render. Use **`2>&1 | tee`** to capture both progress and memory lines.
 
@@ -183,37 +199,34 @@ Use `--tile-quality fast|balanced|high` to tune compositing quality/performance 
 - `balanced` — middle quality/perf compromise.
 - `high` — higher-quality scaler flags and slower encode presets.
 
-`--tile-hwaccel auto` (default) enables hardware acceleration for animated tiles (`--animate-videos`): ffmpeg decode hwaccel and VideoToolbox encoding on macOS when `--encoder auto` is used. Use `--tile-hwaccel off` when minimizing memory is more important than speed or you want software encoding everywhere.
+`--tile-hwaccel auto` (default) enables hardware acceleration for animated tiles (`--animate videos`): ffmpeg decode hwaccel and VideoToolbox encoding on macOS when `--encoder auto` is used. Use `--tile-hwaccel off` when minimizing memory is more important than speed or you want software encoding everywhere.
 
 ### Tile motion
 
-- **`--tile-motion off|ken-burns|axis-x|axis-y|axis-alt`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking.
+- **`--animate`** / **`--animate videos`**: enable tile mode and play video tiles. Bare **`--animate`** also pans stills with **parallax**. **`--animate videos`** is video playback only (no still pan).
+- **`--tile-motion off|ken-burns|parallax`** (default **`off`**): slow pan/zoom **inside each tile cell** before stacking (useful without the full animate preset).
   - **`ken-burns`**: pan + zoom with deterministic per-tile variation.
-  - **`axis-x`**: row-based horizontal drift (even rows left, odd rows right).
-  - **`axis-y`**: row-based vertical drift (even rows up, odd rows down).
-  - **`axis-alt`**: row-based diagonal drift (applies axis-x and axis-y together).
-  Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles.
-- **`--tile-parallax off|auto`** (default **`off`**): keeps the mode direction stable but varies pan magnitude per tile when set to **`auto`**. Requires `--tile-motion` to be set to a non-`off` mode.
-- **`--tile-motion-strength`** (default **`1.0`**, must be **positive**): scales motion intensity; try **`0.5`**–**`2.0`** for tuning. Animated tile MP4 slides (motion and **`--animate-videos`**) encode at **60 fps** to match zoompan output and avoid dropped frames. Longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
-- **`--tile-motion-oversample`** (default **`auto`**): controls sampling resolution before final fit/fill in motion paths. Use numeric values **>=1.0** (for example `1.5` or `2.0`) when you want smoother motion at higher CPU cost.
+  - **`parallax`**: each tile pans on **one** axis only. Row 0 is Y,X,Y…; each following row swaps (X,Y,X…).
+  Still sources are looped for **`--duration`** seconds and encoded as short **MP4** slide files (not single-frame JPEG), so compositing costs more CPU/time than static tiles. Magnitude, strength, and oversample are baked in (auto) — no separate knobs. Animated tile MP4 slides encode at **60 fps**. Longer **`--duration`** (e.g. **4–8** seconds) makes pan/zoom easier to see on large grids.
 
 Example:
 
 ```bash
-uv run slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --tile-parallax auto --duration 3
+uv run slideshow live ~/pics --effect tile --grid 2x2 --tile-motion ken-burns --duration 3
 ```
 
-Row-based diagonal drift:
+Parallax (also the default still pan under `--animate`):
 
 ```bash
-uv run slideshow live ~/pics --effect tile --grid 3x3 --tile-motion axis-alt --tile-parallax auto --duration 4
+uv run slideshow live ~/pics --grid 3x3 --animate --duration 4
+uv run slideshow live ~/pics --effect tile --grid 3x3 --tile-motion parallax --duration 4
 ```
 
 ### Visual safety note
 
 Some effects can include rapid motion, flashes, or strong contrast changes. Keep this in mind when sharing screens or running slideshows in group settings.
 
-For safer defaults, start with longer `--duration` values and keep motion features (`--tile-motion`, `--animate-videos`) off.
+For safer defaults, start with longer `--duration` values and keep motion features (`--tile-motion`, `--animate`) off.
 
 ## Routine checks
 

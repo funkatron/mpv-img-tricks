@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from mpv_img_tricks.cli import (
+    apply_animate_preset,
     build_parser,
     build_plain_render_dry_run_line,
     main,
@@ -19,7 +20,7 @@ from mpv_img_tricks.cli import (
 from tests.conftest import MINIMAL_PNG
 
 
-def test_validate_render_with_effect() -> None:
+def test_validate_render_with_basic_effect_rejected() -> None:
     p = build_parser()
     args = p.parse_args(
         [
@@ -29,7 +30,7 @@ def test_validate_render_with_effect() -> None:
             "--output",
             "o.mp4",
             "--effect",
-            "tile",
+            "basic",
         ]
     )
     with pytest.raises(SystemExit) as ex:
@@ -37,7 +38,17 @@ def test_validate_render_with_effect() -> None:
     assert ex.value.code == 2
 
 
-def test_validate_tile_parallax_requires_motion_mode() -> None:
+def test_validate_animate_with_render_allowed() -> None:
+    p = build_parser()
+    argv = ["live", "d", "--animate", "--render", "--output", "o.mp4"]
+    args = p.parse_args(argv)
+    apply_animate_preset(args, argv)
+    validate_live_args(args, p)
+    assert args.effect == "tile"
+    assert args.render is True
+
+
+def test_validate_tile_effect_with_render_allowed() -> None:
     p = build_parser()
     args = p.parse_args(
         [
@@ -45,50 +56,47 @@ def test_validate_tile_parallax_requires_motion_mode() -> None:
             "d",
             "--effect",
             "tile",
-            "--tile-parallax",
-            "auto",
-        ]
-    )
-    with pytest.raises(SystemExit) as ex:
-        validate_live_args(args, p)
-    assert ex.value.code == 2
-
-
-def test_validate_tile_parallax_auto_allowed_with_axis_alt() -> None:
-    p = build_parser()
-    args = p.parse_args(
-        [
-            "live",
-            "d",
-            "--effect",
-            "tile",
-            "--tile-motion",
-            "axis-alt",
-            "--tile-parallax",
-            "auto",
+            "--render",
+            "--output",
+            "o.mp4",
         ]
     )
     validate_live_args(args, p)
 
 
-def test_validate_tile_parallax_auto_allowed_with_axis_x() -> None:
+def test_animate_full_sets_videos_and_parallax() -> None:
     p = build_parser()
-    args = p.parse_args(
-        [
-            "live",
-            "d",
-            "--effect",
-            "tile",
-            "--tile-motion",
-            "axis-x",
-            "--tile-parallax",
-            "auto",
-        ]
-    )
+    argv = ["live", "d", "--animate"]
+    args = p.parse_args(argv)
+    apply_animate_preset(args, argv)
+    assert args.animate == "full"
+    assert args.effect == "tile"
+    assert args.animate_videos is True
+    assert args.tile_motion == "parallax"
     validate_live_args(args, p)
 
 
-def test_validate_tile_motion_strength_positive() -> None:
+def test_animate_videos_only_skips_still_motion() -> None:
+    p = build_parser()
+    argv = ["live", "d", "--animate", "videos"]
+    args = p.parse_args(argv)
+    apply_animate_preset(args, argv)
+    assert args.animate == "videos"
+    assert args.effect == "tile"
+    assert args.animate_videos is True
+    assert args.tile_motion == "off"
+    validate_live_args(args, p)
+
+
+def test_animate_respects_explicit_tile_motion() -> None:
+    p = build_parser()
+    argv = ["live", "d", "--animate", "--tile-motion", "ken-burns"]
+    args = p.parse_args(argv)
+    apply_animate_preset(args, argv)
+    assert args.tile_motion == "ken-burns"
+
+
+def test_tile_motion_parallax_allowed() -> None:
     p = build_parser()
     args = p.parse_args(
         [
@@ -97,33 +105,10 @@ def test_validate_tile_motion_strength_positive() -> None:
             "--effect",
             "tile",
             "--tile-motion",
-            "ken-burns",
-            "--tile-motion-strength",
-            "0",
+            "parallax",
         ]
     )
-    with pytest.raises(SystemExit) as ex:
-        validate_live_args(args, p)
-    assert ex.value.code == 2
-
-
-def test_validate_tile_motion_oversample_rejects_less_than_one() -> None:
-    p = build_parser()
-    args = p.parse_args(
-        [
-            "live",
-            "d",
-            "--effect",
-            "tile",
-            "--tile-motion",
-            "axis-x",
-            "--tile-motion-oversample",
-            "0.5",
-        ]
-    )
-    with pytest.raises(SystemExit) as ex:
-        validate_live_args(args, p)
-    assert ex.value.code == 2
+    validate_live_args(args, p)
 
 
 def test_main_help_exits(capsys: pytest.CaptureFixture[str]) -> None:

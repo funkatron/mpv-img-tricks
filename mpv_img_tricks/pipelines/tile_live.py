@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import concurrent.futures
 from concurrent.futures import FIRST_COMPLETED, wait
+import json
 import os
+import queue
 import random
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from argparse import Namespace
 from pathlib import Path
@@ -19,14 +22,18 @@ try:
 except ImportError:  # pragma: no cover - non-posix fallback
     resource = None
 
+from mpv_img_tricks import mpv_ipc
 from mpv_img_tricks.media_discovery import discover_sources_to_playlist
 from mpv_img_tricks.mpv_pipeline import run_mpv_slideshow
 from mpv_img_tricks.paths import get_repo_root
 from mpv_img_tricks.pipelines.tile.caching import (
     _build_cache_key,
+    _cache_dir_is_complete,
     _probe_cache_key,
     _source_manifest_hash,
+    _write_cache_complete,
 )
+from mpv_img_tricks.pipelines.tile.encode_policy import apply_temporal_encode_policy
 from mpv_img_tricks.pipelines.tile.filter_graph import (
     _build_filter,
     _filter_for_still_jpeg_encode,
@@ -34,9 +41,7 @@ from mpv_img_tricks.pipelines.tile.filter_graph import (
     _round_even,
 )
 from mpv_img_tricks.pipelines.tile.motion import (
-    _TILE_MOTION_TEMPORAL,
     _TILE_MOTION_ZOOMPAN_FPS,
-    _tile_motion_mode,
     _tile_motion_needs_temporal_slides,
     _tile_slide_outputs_mp4,
 )
@@ -323,7 +328,6 @@ def _log_motion_sampling_summary(
     screen_w: int,
     screen_h: int,
     spacing: int,
-    tile_motion_oversample: str,
     randomize: bool,
     quiet: bool,
 ) -> None:
@@ -337,7 +341,7 @@ def _log_motion_sampling_summary(
             continue
         cell_w = usable_w // ccols
         cell_h = usable_h // crows
-        scale = _motion_sample_scale(tile_motion_oversample, cell_w=cell_w, cell_h=cell_h)
+        scale = _motion_sample_scale(cell_w=cell_w, cell_h=cell_h)
         sample_w = _round_even(cell_w * scale)
         sample_h = _round_even(cell_h * scale)
         samples.append((scale, sample_w, sample_h, cell_w, cell_h))
@@ -345,11 +349,10 @@ def _log_motion_sampling_summary(
         return
     uniq = sorted(set(samples))
     mode = "randomized" if randomize else "fixed"
-    setting = str(tile_motion_oversample)
     if len(uniq) == 1:
         scale, sw, sh, cw, ch = uniq[0]
         _phase(
-            f"phase=compositing-{mode} msg=motion_sampling setting={setting} "
+            f"phase=compositing-{mode} msg=motion_sampling setting=auto "
             f"resolved_scale={scale:.2f} sample={sw}x{sh} cell={cw}x{ch}",
             quiet=quiet,
         )
@@ -361,7 +364,7 @@ def _log_motion_sampling_summary(
     min_sh = min(v[2] for v in uniq)
     max_sh = max(v[2] for v in uniq)
     _phase(
-        f"phase=compositing-{mode} msg=motion_sampling setting={setting} "
+        f"phase=compositing-{mode} msg=motion_sampling setting=auto "
         f"resolved_scale_range={min_scale:.2f}-{max_scale:.2f} "
         f"sample_range={min_sw}x{min_sh}-{max_sw}x{max_sh} unique_layout_profiles={len(uniq)}",
         quiet=quiet,
@@ -520,7 +523,7 @@ def _composite_one_slide(
     scale_mode: str,
     tile_quality: str,
     args: Namespace,
-) -> bool:
+) -> tuple[bool, str]:
     per_slide = ccols * crows
     inputs = [paths[min(cursor_start + i, len(paths) - 1)] for i in range(per_slide)]
     input_is_video = [_is_video(p) for p in inputs]
@@ -533,9 +536,6 @@ def _composite_one_slide(
         scale_mode=scale_mode,
         tile_quality=tile_quality,
         tile_motion=str(getattr(args, "tile_motion", "off")),
-        tile_parallax=str(getattr(args, "tile_parallax", "off")),
-        tile_motion_strength=float(getattr(args, "tile_motion_strength", 1.0)),
-        tile_motion_oversample=str(getattr(args, "tile_motion_oversample", "auto")),
         duration=float(args.duration),
         input_is_video=input_is_video,
     )
@@ -580,6 +580,164 @@ def _master_control_token(args: Namespace) -> str:
     return "auto"
 
 
+def _mpv_passthrough_and_audio(args: Namespace) -> tuple[list[str], bool]:
+    passthrough = [
+        "--hr-seek=yes",
+        "--keep-open=no",
+        "--media-controls=no",
+        "--input-media-keys=no",
+        "--force-media-title=mpv-img-tricks",
+        "--title=mpv-img-tricks",
+    ]
+    if args.sound:
+        passthrough.extend([f"--audio-file={args.sound}", "--audio-display=no"])
+        return passthrough, False
+    return passthrough, True
+
+
+def _concat_tile_slides_to_output(files: list[str], args: Namespace) -> int:
+    """Concatenate pre-rendered tile slides into ``--output`` (tile ``--render`` path)."""
+    if not files:
+        return 1
+    output = Path(args.output or "tile-slideshow.mp4").expanduser()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    duration = max(float(args.duration), 1e-3)
+    is_video = Path(files[0]).suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False, encoding="utf-8", errors="surrogateescape"
+    ) as cf:
+        concat_path = cf.name
+        if is_video:
+            for path in files:
+                esc = path.replace("'", "'\\''")
+                cf.write(f"file '{esc}'\n")
+        else:
+            for path in files:
+                esc = path.replace("'", "'\\''")
+                cf.write(f"file '{esc}'\n")
+                cf.write(f"duration {duration}\n")
+            # concat demuxer needs the last file repeated without duration
+            esc = files[-1].replace("'", "'\\''")
+            cf.write(f"file '{esc}'\n")
+
+    if is_video:
+        cmd = [
+            "ffmpeg",
+            "-nostdin",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_path,
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            "-y",
+            str(output),
+        ]
+    else:
+        # Still slides: encode a timed slideshow (same idea as plain_render pacing via duration).
+        if sys.platform == "darwin":
+            vcodec = [
+                "-c:v",
+                "hevc_videotoolbox",
+                "-tag:v",
+                "hvc1",
+                "-b:v",
+                "25M",
+            ]
+        else:
+            vcodec = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23"]
+        cmd = [
+            "ffmpeg",
+            "-nostdin",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_path,
+            *vcodec,
+            "-an",
+            "-y",
+            str(output),
+        ]
+
+    quiet = bool(getattr(args, "quiet", False))
+    _phase(f"phase=render msg=concat slides={len(files)} output={output}", quiet=quiet)
+    try:
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=not bool(getattr(args, "debug", False)),
+            text=True,
+        )
+    finally:
+        Path(concat_path).unlink(missing_ok=True)
+
+    if proc.returncode != 0:
+        # Video copy can fail across mixed encoder params; re-encode once.
+        if is_video:
+            _phase("phase=render msg=concat_copy_failed retry=reencode", quiet=quiet)
+            if sys.platform == "darwin":
+                vcodec = ["-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "25M"]
+            else:
+                vcodec = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23"]
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8", errors="surrogateescape"
+            ) as cf:
+                concat_path = cf.name
+                for path in files:
+                    esc = path.replace("'", "'\\''")
+                    cf.write(f"file '{esc}'\n")
+            cmd = [
+                "ffmpeg",
+                "-nostdin",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_path,
+                *vcodec,
+                "-an",
+                "-movflags",
+                "+faststart",
+                "-y",
+                str(output),
+            ]
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    check=False,
+                    capture_output=not bool(getattr(args, "debug", False)),
+                    text=True,
+                )
+            finally:
+                Path(concat_path).unlink(missing_ok=True)
+        if proc.returncode != 0:
+            err = (proc.stderr or "").strip() if proc.stderr else ""
+            print(f"Error: Failed to write tile render to {output}", file=sys.stderr)
+            if err and bool(getattr(args, "debug", False)):
+                print(err, file=sys.stderr)
+            return 1
+
+    if not quiet:
+        print(f"✓ Video created: {output}")
+        print(f'Play with: mpv --fs "{output}"')
+    return 0
+
+
+def _deliver_tile_slides(files: list[str], args: Namespace, *, shuffle: bool) -> int:
+    """Play slides in mpv, or concat to ``--output`` when ``--render`` is set."""
+    if bool(getattr(args, "render", False)):
+        return _concat_tile_slides_to_output(files, args)
+    return _play_mpv(files, args, shuffle=shuffle)
+
+
 def _play_mpv(files: list[str], args: Namespace, *, shuffle: bool) -> int:
     repo_root = get_repo_root()
     try:
@@ -596,12 +754,7 @@ def _play_mpv(files: list[str], args: Namespace, *, shuffle: bool) -> int:
             tmp.write(path + "\n")
         playlist = Path(tmp.name)
 
-    passthrough = ["--hr-seek=yes", "--keep-open=no", "--media-controls=no", "--input-media-keys=no", "--force-media-title=mpv-img-tricks", "--title=mpv-img-tricks"]
-    if args.sound:
-        passthrough.extend([f"--audio-file={args.sound}", "--audio-display=no"])
-        no_audio = False
-    else:
-        no_audio = True
+    passthrough, no_audio = _mpv_passthrough_and_audio(args)
 
     try:
         return run_mpv_slideshow(
@@ -627,6 +780,110 @@ def _play_mpv(files: list[str], args: Namespace, *, shuffle: bool) -> int:
     finally:
         try:
             playlist.unlink()
+        except OSError:
+            pass
+
+
+def _ipc_socket_path() -> str:
+    fd, path = tempfile.mkstemp(prefix="mpv-tile-", suffix=".socket")
+    os.close(fd)
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    return path
+
+
+def _play_mpv_progressive_append(
+    first_file: str,
+    append_q: queue.Queue[str | None],
+    args: Namespace,
+    *,
+    quiet: bool,
+) -> int:
+    """Play first slide immediately; append later slides via mpv IPC as they finish."""
+    repo_root = get_repo_root()
+    ipc_socket = _ipc_socket_path()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".m3u", delete=False, encoding="utf-8") as tmp:
+        tmp.write(first_file + "\n")
+        playlist = Path(tmp.name)
+
+    passthrough, no_audio = _mpv_passthrough_and_audio(args)
+    stop_appender = threading.Event()
+
+    def _appender() -> None:
+        ready = mpv_ipc.wait_until_ready(ipc_socket, timeout_s=45.0)
+        if not ready:
+            _phase(
+                "phase=playback msg=ipc_not_ready timeout_s=45 "
+                "hint=background_slides_will_not_append",
+                quiet=quiet,
+            )
+        while not stop_appender.is_set():
+            try:
+                item = append_q.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            payload = json.dumps({"command": ["loadfile", item, "append"]})
+            deadline = time.monotonic() + 60.0
+            ok = False
+            while time.monotonic() < deadline and not stop_appender.is_set():
+                if mpv_ipc.send_json(ipc_socket, payload):
+                    ok = True
+                    break
+                time.sleep(0.1)
+            if ok:
+                count = mpv_ipc.get_property(ipc_socket, "playlist-count")
+                _phase(
+                    f"phase=playback msg=playlist_append file={Path(item).name} "
+                    f"playlist_count={count or 'unknown'}",
+                    quiet=quiet,
+                )
+            else:
+                _phase(
+                    f"phase=playback msg=playlist_append_failed file={Path(item).name}",
+                    quiet=quiet,
+                )
+
+    appender = threading.Thread(target=_appender, name="tile-playlist-append", daemon=True)
+    appender.start()
+    try:
+        return run_mpv_slideshow(
+            playlist,
+            repo_root,
+            duration=str(args.duration),
+            fullscreen=True,
+            shuffle=False,
+            loop_mode="playlist",
+            scale_mode="fit",
+            downscale_larger=True,
+            instances=1,
+            display=args.display,
+            display_map=args.display_map,
+            master_control=_master_control_token(args),
+            watch_ipc_socket=ipc_socket,
+            use_slideshow_bindings=True,
+            no_audio=no_audio,
+            extra_scripts=(),
+            mpv_arg_passthrough=passthrough,
+            debug=bool(args.debug),
+        )
+    finally:
+        stop_appender.set()
+        try:
+            append_q.put_nowait(None)
+        except queue.Full:
+            pass
+        appender.join(timeout=2.0)
+        try:
+            playlist.unlink()
+        except OSError:
+            pass
+        try:
+            if Path(ipc_socket).exists():
+                os.unlink(ipc_socket)
         except OSError:
             pass
 
@@ -712,6 +969,15 @@ def run_tile_live(args: Namespace) -> int:
         safe_mode=safe_mode,
         quiet=bool(args.quiet),
     )
+    screen_w, screen_h = apply_temporal_encode_policy(
+        args,
+        cols=cols,
+        rows=rows,
+        screen_w=screen_w,
+        screen_h=screen_h,
+        quiet=bool(args.quiet),
+        phase_log=_phase,
+    )
     _phase(f"phase=screen msg=resolved size={screen_w}x{screen_h}", quiet=bool(args.quiet))
     if bool(args.animate_videos):
         hw_mode = str(getattr(args, "tile_hwaccel", "auto"))
@@ -738,7 +1004,6 @@ def run_tile_live(args: Namespace) -> int:
             spacing=spacing,
             scale_mode=args.scale_mode,
             tile_quality=str(getattr(args, "tile_quality", "balanced")),
-            tile_motion_oversample=str(getattr(args, "tile_motion_oversample", "auto")),
         )
         cmd = ["mpv", f"--geometry={screen_w}x{screen_h}+0+0", "--fullscreen", f"--image-display-duration={args.duration}", f"--lavfi-complex={filter_complex}"]
         first = True
@@ -774,6 +1039,8 @@ def run_tile_live(args: Namespace) -> int:
         if not _tile_slide_outputs_mp4(args):
             candidate_exts.append(".png")
         for ext in candidate_exts:
+            if not _cache_dir_is_complete(out_dir, ext=ext):
+                continue
             existing = sorted(str(p) for p in out_dir.glob(f"*{ext}"))
             if not existing:
                 continue
@@ -789,7 +1056,7 @@ def run_tile_live(args: Namespace) -> int:
                     f"compositing=skipped key={key}",
                     quiet=bool(args.quiet),
                 )
-            return _play_mpv(existing, args, shuffle=do_randomize)
+            return _deliver_tile_slides(existing, args, shuffle=do_randomize)
 
     if out_dir.exists():
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -830,7 +1097,6 @@ def run_tile_live(args: Namespace) -> int:
             screen_w=screen_w,
             screen_h=screen_h,
             spacing=spacing,
-            tile_motion_oversample=str(getattr(args, "tile_motion_oversample", "auto")),
             randomize=do_randomize,
             quiet=bool(args.quiet),
         )
@@ -884,53 +1150,56 @@ def run_tile_live(args: Namespace) -> int:
             quiet=False,
         )
 
-    def run_compositing_pass(ext: str) -> tuple[int, int]:
+    def _slide_cursor_start(slide_idx: int) -> int:
+        cursor = 0
+        for i in range(slide_idx):
+            ccols, crows = layouts[i]
+            cursor += ccols * crows
+        return cursor
+
+    def _submit_slide(
+        ex: concurrent.futures.ThreadPoolExecutor,
+        slide_idx: int,
+        ext: str,
+    ) -> concurrent.futures.Future[tuple[bool, str]]:
+        ccols, crows = layouts[slide_idx]
+        return ex.submit(
+            _composite_one_slide,
+            slide_idx=slide_idx,
+            ccols=ccols,
+            crows=crows,
+            cursor_start=_slide_cursor_start(slide_idx),
+            paths=paths,
+            out_dir=out_dir,
+            ext=ext,
+            screen_w=screen_w,
+            screen_h=screen_h,
+            spacing=spacing,
+            scale_mode=args.scale_mode,
+            tile_quality=str(getattr(args, "tile_quality", "balanced")),
+            args=args,
+        )
+
+    def run_compositing_pass(ext: str, *, start_idx: int = 0) -> tuple[int, int]:
+        remaining = total_slides - start_idx
         progress = _Progress(
             phase=f"compositing-{'randomized' if do_randomize else 'fixed'}",
             label=f"rendering {'randomized' if do_randomize else 'fixed'} composites ({ext})",
             total=total_slides,
             quiet=bool(args.quiet),
         )
+        if start_idx > 0:
+            progress.update(start_idx, extra="progressive_resume")
 
-        layout_idx = 0
-        sched_cursor = 0
-
-        def schedule_next(ex: concurrent.futures.ThreadPoolExecutor) -> concurrent.futures.Future[tuple[bool, str]] | None:
-            nonlocal layout_idx, sched_cursor
-            if layout_idx >= len(layouts):
-                return None
-            slide_idx = layout_idx
-            ccols, crows = layouts[layout_idx]
-            start = sched_cursor
-            sched_cursor += ccols * crows
-            layout_idx += 1
-            return ex.submit(
-                _composite_one_slide,
-                slide_idx=slide_idx,
-                ccols=ccols,
-                crows=crows,
-                cursor_start=start,
-                paths=paths,
-                out_dir=out_dir,
-                ext=ext,
-                screen_w=screen_w,
-                screen_h=screen_h,
-                spacing=spacing,
-                scale_mode=args.scale_mode,
-                tile_quality=str(getattr(args, "tile_quality", "balanced")),
-                args=args,
-            )
-
-        done = 0
+        layout_idx = start_idx
+        done = start_idx
         failures = 0
         retryable = 0
         pending: set[concurrent.futures.Future[tuple[bool, str]]] = set()
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
-            while len(pending) < jobs:
-                fut = schedule_next(ex)
-                if fut is None:
-                    break
-                pending.add(fut)
+            while len(pending) < jobs and layout_idx < total_slides:
+                pending.add(_submit_slide(ex, layout_idx, ext))
+                layout_idx += 1
             while pending:
                 done_now, pending = wait(pending, return_when=FIRST_COMPLETED)
                 in_flight = len(pending)
@@ -949,15 +1218,172 @@ def run_tile_live(args: Namespace) -> int:
                     in_flight=len(pending),
                     quiet=bool(args.quiet),
                 )
-                while len(pending) < jobs:
-                    nf = schedule_next(ex)
-                    if nf is None:
-                        break
-                    pending.add(nf)
-        progress.finish(extra=f"slides={total_slides} failures={failures}")
+                while len(pending) < jobs and layout_idx < total_slides:
+                    pending.add(_submit_slide(ex, layout_idx, ext))
+                    layout_idx += 1
+        progress.finish(extra=f"slides={total_slides} failures={failures} remaining_was={remaining}")
         return failures, retryable
 
+    try:
+        instances = int(args.instances)
+    except (TypeError, ValueError):
+        instances = 1
+    use_progressive = total_slides > 1 and instances == 1 and not bool(getattr(args, "render", False))
+
     output_ext = preferred_ext
+    if use_progressive:
+        phase_name = "randomized" if do_randomize else "fixed"
+        c0, r0 = layouts[0]
+        ok0, err0 = _composite_one_slide(
+            slide_idx=0,
+            ccols=c0,
+            crows=r0,
+            cursor_start=0,
+            paths=paths,
+            out_dir=out_dir,
+            ext=output_ext,
+            screen_w=screen_w,
+            screen_h=screen_h,
+            spacing=spacing,
+            scale_mode=args.scale_mode,
+            tile_quality=str(getattr(args, "tile_quality", "balanced")),
+            args=args,
+        )
+        if not ok0:
+            if (
+                not _tile_slide_outputs_mp4(args)
+                and output_ext == ".jpg"
+                and _is_retryable_jpeg_failure(err0)
+            ):
+                _phase(
+                    f"phase=compositing-{phase_name} "
+                    f"msg=retry_png_fallback reason=jpeg_or_scaler_failure failures=1 progressive=abandoned",
+                    quiet=bool(args.quiet),
+                )
+                for p in out_dir.glob("*.jpg"):
+                    try:
+                        p.unlink()
+                    except OSError:
+                        pass
+                output_ext = ".png"
+                failures, _ = run_compositing_pass(output_ext)
+                files = sorted(str(p) for p in out_dir.glob(f"*{output_ext}"))
+                if not files:
+                    return 1
+                if failures == 0:
+                    _write_cache_complete(out_dir)
+                _phase(
+                    f"phase=compositing-{phase_name} msg=cache_saved dir={out_dir}",
+                    quiet=bool(args.quiet),
+                )
+                return _deliver_tile_slides(files, args, shuffle=do_randomize)
+            return 1
+
+        first_file = str(out_dir / f"0000{output_ext}")
+        _phase(
+            f"phase=playback msg=progressive_start slide=0/{total_slides} reason=ttff",
+            quiet=bool(args.quiet),
+        )
+
+        append_q: queue.Queue[str | None] = queue.Queue()
+        cancel = threading.Event()
+
+        def _background_remaining() -> None:
+            progress = _Progress(
+                phase=f"compositing-{phase_name}",
+                label=f"rendering {'randomized' if do_randomize else 'fixed'} composites ({output_ext})",
+                total=total_slides,
+                quiet=bool(args.quiet),
+            )
+            progress.update(1, extra="progressive_bg")
+            layout_idx = 1
+            done = 1
+            failures = 0
+            pending: dict[concurrent.futures.Future[tuple[bool, str]], int] = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
+                while len(pending) < jobs and layout_idx < total_slides and not cancel.is_set():
+                    _phase(
+                        f"phase=compositing-{phase_name} msg=slide_start "
+                        f"slide={layout_idx}/{total_slides} progressive=true",
+                        quiet=bool(args.quiet),
+                    )
+                    fut = _submit_slide(ex, layout_idx, output_ext)
+                    pending[fut] = layout_idx
+                    layout_idx += 1
+                while pending and not cancel.is_set():
+                    done_now, _still = wait(set(pending.keys()), return_when=FIRST_COMPLETED)
+                    for fut in done_now:
+                        slide_idx = pending.pop(fut)
+                        ok, _stderr_text = fut.result()
+                        if not ok:
+                            failures += 1
+                            _phase(
+                                f"phase=compositing-{phase_name} msg=slide_failed "
+                                f"slide={slide_idx}/{total_slides}",
+                                quiet=bool(args.quiet),
+                            )
+                        else:
+                            out_path = str(out_dir / f"{slide_idx:04d}{output_ext}")
+                            append_q.put(out_path)
+                            _phase(
+                                f"phase=compositing-{phase_name} msg=slide_done "
+                                f"slide={slide_idx}/{total_slides} queued_append=true",
+                                quiet=bool(args.quiet),
+                            )
+                        done += 1
+                        approx_images = min(done * max(tile_count, 1), len(paths))
+                        progress.update(
+                            done,
+                            extra=f"in_flight={len(pending)} images={approx_images}/{len(paths)}",
+                        )
+                        _log_compositing_mem_if_due(
+                            done=done,
+                            total=total_slides,
+                            in_flight=len(pending),
+                            quiet=bool(args.quiet),
+                        )
+                    while len(pending) < jobs and layout_idx < total_slides and not cancel.is_set():
+                        _phase(
+                            f"phase=compositing-{phase_name} msg=slide_start "
+                            f"slide={layout_idx}/{total_slides} progressive=true",
+                            quiet=bool(args.quiet),
+                        )
+                        fut = _submit_slide(ex, layout_idx, output_ext)
+                        pending[fut] = layout_idx
+                        layout_idx += 1
+                if cancel.is_set():
+                    for fut in list(pending.keys()):
+                        fut.cancel()
+            progress.finish(extra=f"slides={total_slides} failures={failures} progressive=true")
+            if failures == 0 and not cancel.is_set() and done >= total_slides:
+                _write_cache_complete(out_dir)
+                _phase(
+                    f"phase=compositing-{phase_name} msg=cache_saved dir={out_dir}",
+                    quiet=bool(args.quiet),
+                )
+            append_q.put(None)
+
+        bg = threading.Thread(target=_background_remaining, name="tile-composite-bg", daemon=True)
+        bg.start()
+        try:
+            return _play_mpv_progressive_append(
+                first_file,
+                append_q,
+                args,
+                quiet=bool(args.quiet),
+            )
+        finally:
+            # Prefer finishing remaining slides so the cache can complete; cancel only if
+            # the worker does not wrap up promptly after mpv exits.
+            bg.join(timeout=max(120.0, float(args.duration) * float(total_slides) * 2.0))
+            if bg.is_alive():
+                cancel.set()
+                try:
+                    append_q.put_nowait(None)
+                except queue.Full:
+                    pass
+                bg.join(timeout=5.0)
+
     failures, retryable_failures = run_compositing_pass(output_ext)
     if failures and not _tile_slide_outputs_mp4(args) and output_ext == ".jpg" and retryable_failures > 0:
         _phase(
@@ -976,6 +1402,11 @@ def run_tile_live(args: Namespace) -> int:
     files = sorted(str(p) for p in out_dir.glob(f"*{output_ext}"))
     if not files:
         return 1
-    _phase(f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_saved dir={out_dir}", quiet=bool(args.quiet))
-    return _play_mpv(files, args, shuffle=do_randomize)
+    if failures == 0:
+        _write_cache_complete(out_dir)
+    _phase(
+        f"phase=compositing-{'randomized' if do_randomize else 'fixed'} msg=cache_saved dir={out_dir}",
+        quiet=bool(args.quiet),
+    )
+    return _deliver_tile_slides(files, args, shuffle=do_randomize)
 

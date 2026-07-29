@@ -6,6 +6,8 @@ import hashlib
 from argparse import Namespace
 from pathlib import Path
 
+_CACHE_COMPLETE_MARKER = "COMPLETE"
+
 
 def _sha256_file_prefix(path: Path, prefix_bytes: int = 65536) -> str:
     h = hashlib.sha256()
@@ -32,6 +34,28 @@ def _probe_cache_key(path: Path) -> str:
     return hashlib.md5(_media_identity(path).encode("utf-8", errors="replace")).hexdigest()
 
 
+def _cache_complete_path(out_dir: Path) -> Path:
+    return out_dir / _CACHE_COMPLETE_MARKER
+
+
+def _write_cache_complete(out_dir: Path) -> None:
+    _cache_complete_path(out_dir).write_text("ok\n", encoding="utf-8")
+
+
+def _cache_dir_is_complete(out_dir: Path, *, ext: str, expected_slides: int | None = None) -> bool:
+    """True when COMPLETE marker exists and slide files look finished."""
+    if not out_dir.is_dir():
+        return False
+    if not _cache_complete_path(out_dir).is_file():
+        return False
+    files = sorted(out_dir.glob(f"*{ext}"))
+    if not files:
+        return False
+    if expected_slides is not None and len(files) != expected_slides:
+        return False
+    return True
+
+
 def _build_cache_key(
     effect: str,
     manifest: str,
@@ -49,10 +73,7 @@ def _build_cache_key(
         f"tile_hwaccel={getattr(args, 'tile_hwaccel', 'auto')}\n"
         f"tile_quality={getattr(args, 'tile_quality', 'balanced')}\n"
         f"tile_motion={getattr(args, 'tile_motion', 'off')}\n"
-        f"tile_parallax={getattr(args, 'tile_parallax', 'off')}\n"
-        f"tile_motion_strength={getattr(args, 'tile_motion_strength', 1.0)}\n"
-        f"tile_motion_oversample={getattr(args, 'tile_motion_oversample', 'auto')}\n"
+        f"tile_motion_defaults=vary_auto,strength_1.0,oversample_auto,parallax_short_axis_zoom_v1\n"
         f"{extras}\n"
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-

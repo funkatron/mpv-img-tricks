@@ -6,10 +6,8 @@ from .motion import (
     _TILE_MOTION_TEMPORAL,
     _TILE_MOTION_ZOOMPAN_FPS,
     _ken_burns_animated_indices,
-    _zoompan_axis_alt,
-    _zoompan_axis_x,
-    _zoompan_axis_y,
     _zoompan_ken_burns,
+    _zoompan_parallax,
 )
 
 
@@ -17,14 +15,8 @@ def _round_even(value: float) -> int:
     return max(2, int(round(float(value) / 2.0) * 2))
 
 
-def _motion_sample_scale(tile_motion_oversample: str, *, cell_w: int, cell_h: int) -> float:
-    raw = str(tile_motion_oversample).strip().lower()
-    if raw and raw != "auto":
-        try:
-            return max(1.0, float(raw))
-        except ValueError:
-            return 1.0
-    # Auto mode: increase sampling for small tiles to reduce visible stepping.
+def _motion_sample_scale(*, cell_w: int, cell_h: int) -> float:
+    """Auto oversample for small tiles to reduce visible pan stepping."""
     short_edge = max(1, min(cell_w, cell_h))
     if short_edge <= 220:
         return 2.0
@@ -71,9 +63,6 @@ def _build_filter(
     scale_mode: str,
     tile_quality: str,
     tile_motion: str = "off",
-    tile_parallax: str = "off",
-    tile_motion_strength: float = 1.0,
-    tile_motion_oversample: str = "auto",
     duration: float = 2.0,
     input_is_video: list[bool] | None = None,
 ) -> tuple[str, int]:
@@ -85,7 +74,7 @@ def _build_filter(
     cell_w = usable_w // cols
     cell_h = usable_h // rows
     cell = _tile_cell_filter(cell_w, cell_h, scale_mode, tile_quality=tile_quality)
-    sample_scale = _motion_sample_scale(tile_motion_oversample, cell_w=cell_w, cell_h=cell_h)
+    sample_scale = _motion_sample_scale(cell_w=cell_w, cell_h=cell_h)
     sample_w = _round_even(cell_w * sample_scale)
     sample_h = _round_even(cell_h * sample_scale)
     motion_cell = _tile_cell_filter(sample_w, sample_h, scale_mode, tile_quality=tile_quality)
@@ -109,38 +98,14 @@ def _build_filter(
                     sample_h,
                     i,
                     duration=float(duration),
-                    strength=float(tile_motion_strength),
-                    parallax=str(tile_parallax),
-                )
-            elif tile_motion == "axis-x":
-                zp = _zoompan_axis_x(
-                    sample_w,
-                    sample_h,
-                    i,
-                    cols,
-                    duration=float(duration),
-                    strength=float(tile_motion_strength),
-                    parallax=str(tile_parallax),
-                )
-            elif tile_motion == "axis-y":
-                zp = _zoompan_axis_y(
-                    sample_w,
-                    sample_h,
-                    i,
-                    cols,
-                    duration=float(duration),
-                    strength=float(tile_motion_strength),
-                    parallax=str(tile_parallax),
                 )
             else:
-                zp = _zoompan_axis_alt(
+                zp = _zoompan_parallax(
                     sample_w,
                     sample_h,
                     i,
                     cols,
                     duration=float(duration),
-                    strength=float(tile_motion_strength),
-                    parallax=str(tile_parallax),
                 )
             # Normalize to sampled tile space while preserving aspect, then animate,
             # then downsample to final tile size.
@@ -170,4 +135,3 @@ def _filter_for_still_jpeg_encode(filter_complex: str) -> str:
         return filter_complex
     stem = filter_complex[: -len("[out]")]
     return f"{stem}[pjfmt];[pjfmt]format=yuvj420p[out]"
-

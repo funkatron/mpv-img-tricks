@@ -24,7 +24,7 @@ slideshow (CLI) -> mpv_img_tricks.cli
  plain_render (Python + ffmpeg)
 ```
 
-- `--effect` with `--render` is rejected by CLI.
+- `--effect` with `--render` is only allowed for **tile** (including `--animate --render`).
 - `live` is the default subcommand when omitted.
 
 ---
@@ -39,7 +39,7 @@ slideshow (CLI) -> mpv_img_tricks.cli
 | `mpv_img_tricks/pipelines/tile_live.py` | Tile orchestration: discovery, validation, scheduling, compositing, cache, mpv launch |
 | `mpv_img_tricks/pipelines/tile/caching.py` | Tile cache/probe key derivation and source manifest hashing |
 | `mpv_img_tricks/pipelines/tile/filter_graph.py` | ffmpeg filtergraph builders for still and temporal tile paths |
-| `mpv_img_tricks/pipelines/tile/motion.py` | Tile motion modes (`ken-burns`, `axis-x`, `axis-y`, `axis-alt`) and zoompan helpers |
+| `mpv_img_tricks/pipelines/tile/motion.py` | Tile motion modes (`ken-burns`, `parallax`) and zoompan helpers |
 | `mpv_img_tricks/pipelines/tile/scheduling.py` | Worker caps (`cpu`/`tile`/`ram`) and layout splitting |
 | `mpv_img_tricks/pipelines/plain_render.py` | Plain render (`--render` without `--effect`) |
 | `mpv_img_tricks/mpv_pipeline.py` | mpv argv and multi-instance/master-control helpers |
@@ -56,8 +56,14 @@ slideshow (CLI) -> mpv_img_tricks.cli
 - Composite cache:
   - fixed: `~/.cache/mpv-img-tricks/tile-fixed`
   - randomized: `~/.cache/mpv-img-tricks/tile-randomized`
+  - hits require a `COMPLETE` marker (partial progressive dirs are rebuilt)
 - Temporal tile motion:
-  - still-motion modes `ken-burns`, `axis-x`, `axis-y`, `axis-alt` render short MP4 slides
+  - still-motion modes `ken-burns`, `parallax` render short MP4 slides
+  - `--animate` enables video tiles + parallax stills; `--animate videos` is video-only
+- Progressive playback:
+  - multi-slide, single-instance: encode slide 0 → start mpv → background composite + IPC append
+- Large-temporal encode policy (`pipelines/tile/encode_policy.py`):
+  - may auto-fit resolution for large temporal grids; logs `phase=encode-policy msg=auto_applied`
 - Worker scheduling:
   - caps: `cpu_cap`, `tile_cap`, optional RAM clamp (`--auto-ram-cap`)
   - logs include `job_schedule ... limit_reason=...`

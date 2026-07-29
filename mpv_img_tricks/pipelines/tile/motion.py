@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from argparse import Namespace
 
-_TILE_MOTION_TEMPORAL = frozenset({"ken-burns", "axis-x", "axis-y", "axis-alt"})
+_TILE_MOTION_TEMPORAL = frozenset({"ken-burns", "parallax"})
 # Scales pan extent and zoom ramp for all tile zoompan motion.
 _TILE_MOTION_SPEED = 1.0
+# Default motion intensity (formerly --tile-motion-strength).
+_TILE_MOTION_STRENGTH = 1.0
 # zoompan output fps; still-motion tile MP4 encode uses the same -r.
 _TILE_MOTION_ZOOMPAN_FPS = 60
 
 
 def _tile_motion_mode(args: Namespace) -> str:
-    return str(getattr(args, "tile_motion", "off"))
+    return str(getattr(args, "tile_motion", "off") or "off")
 
 
 def _tile_motion_needs_temporal_slides(args: Namespace) -> bool:
@@ -22,7 +24,7 @@ def _tile_motion_needs_temporal_slides(args: Namespace) -> bool:
 
 def _tile_slide_outputs_mp4(args: Namespace) -> bool:
     """Temporal tile motion (or animated tiles) needs video slide files, not single-frame JPEG."""
-    return bool(args.animate_videos) or _tile_motion_needs_temporal_slides(args)
+    return bool(getattr(args, "animate_videos", False)) or _tile_motion_needs_temporal_slides(args)
 
 
 def _pan_progress_expr(dm1: int, *, eased: bool) -> str:
@@ -43,6 +45,7 @@ def _zoompan_linear_pan(
     py: float,
     fixed_zoom: bool = False,
     eased: bool = False,
+    zoom: float | None = None,
 ) -> str:
     """Pan using output frame index ``on``.
 
@@ -56,7 +59,9 @@ def _zoompan_linear_pan(
     px = max(-1.0, min(1.0, float(px))) * _TILE_MOTION_SPEED
     py = max(-1.0, min(1.0, float(py))) * _TILE_MOTION_SPEED
     progress = _pan_progress_expr(dm1, eased=eased)
-    if fixed_zoom:
+    if zoom is not None:
+        z_expr = f"{max(float(zoom), 1.01):.4f}"
+    elif fixed_zoom:
         z_raw = min(1.04 + 0.07 * strength, 1.16)
         z_fix = 1.0 + (z_raw - 1.0) * _TILE_MOTION_SPEED
         z_expr = f"{z_fix:.4f}"
@@ -76,18 +81,17 @@ def _zoompan_ken_burns(
     tile_index: int,
     *,
     duration: float,
-    strength: float,
-    parallax: str,
 ) -> str:
-    """Ken Burns-style combined pan + zoom (per-tile variation when parallax is auto)."""
-    if parallax == "auto":
-        px = (1.0 if (tile_index % 2) == 0 else -1.0) * (0.82 + 0.04 * (tile_index % 5))
-        py = (-1.0 if ((tile_index // 2) % 2) == 0 else 1.0) * (0.48 + 0.04 * ((tile_index + 1) % 5))
-    else:
-        px = 0.88
-        py = 0.38
+    """Ken Burns-style combined pan + zoom with deterministic per-tile variation."""
+    px = (1.0 if (tile_index % 2) == 0 else -1.0) * (0.82 + 0.04 * (tile_index % 5))
+    py = (-1.0 if ((tile_index // 2) % 2) == 0 else 1.0) * (0.48 + 0.04 * ((tile_index + 1) % 5))
     return _zoompan_linear_pan(
-        cell_w, cell_h, duration=duration, strength=strength, px=px, py=py
+        cell_w,
+        cell_h,
+        duration=duration,
+        strength=_TILE_MOTION_STRENGTH,
+        px=px,
+        py=py,
     )
 
 
@@ -96,11 +100,44 @@ def _tile_alternate_sign(tile_index: int) -> float:
     return -1.0 if (tile_index % 2) == 0 else 1.0
 
 
-def _parallax_multiplier(tile_index: int, parallax: str) -> float:
-    """Keep mode direction stable; only vary magnitude when parallax is auto."""
-    if parallax != "auto":
-        return 1.0
+def _parallax_uses_y(tile_index: int, cols: int) -> bool:
+    """Row-swapped checkerboard: row0 is Y,X,Y…; row1 is X,Y,X…; then repeats."""
+    safe_cols = max(int(cols), 1)
+    row = tile_index // safe_cols
+    col = tile_index % safe_cols
+    return ((row + col) % 2) == 0
+
+
+def _parallax_magnitude(tile_index: int) -> float:
+    """Deterministic per-tile pan magnitude (baked-in vary)."""
     return 0.84 + 0.04 * (tile_index % 5)
+
+
+def _parallax_base_zoom(strength: float) -> float:
+    """Default fixed zoom for parallax (same curve as ``_zoompan_linear_pan``)."""
+    z_raw = min(1.04 + 0.07 * max(float(strength), 0.05), 1.16)
+    return 1.0 + (z_raw - 1.0) * _TILE_MOTION_SPEED
+
+
+def _parallax_zoom_for_axis(cell_w: int, cell_h: int, *, horizontal: bool, strength: float) -> float:
+    """Raise zoom on the short cell axis so screen-pixel travel can match the long axis.
+
+    Visible travel is roughly ``axis_dim * (1 - 1/z) * |p|``. On a ``30x2`` grid, cells are
+    ~64×540, so max X travel at z≈1.11 is only ~6px vs ~54px for Y — amplitude cannot fix
+    that. Increasing z on the short-axis pan creates enough pan room to equalize.
+    """
+    z_base = _parallax_base_zoom(strength)
+    pan_base = 1.0 - 1.0 / z_base
+    w = max(float(cell_w), 1.0)
+    h = max(float(cell_h), 1.0)
+    if horizontal:
+        # Match Y travel at base zoom: w * pan_x ≈ h * pan_base
+        pan = pan_base * (h / w)
+    else:
+        pan = pan_base * (w / h)
+    # Never soften the long axis; cap short-axis zoom so crops stay readable.
+    pan = min(max(pan, pan_base), 0.75)
+    return 1.0 / (1.0 - pan)
 
 
 # Ken Burns runs a zoompan chain per animated tile; small grids can afford all tiles.
@@ -120,78 +157,36 @@ def _ken_burns_animated_indices(tile_count: int) -> set[int]:
     return {(k * tile_count) // animated for k in range(animated)}
 
 
-def _zoompan_axis_x(
+def _zoompan_parallax(
     cell_w: int,
     cell_h: int,
     tile_index: int,
     cols: int,
     *,
     duration: float,
-    strength: float,
-    parallax: str,
 ) -> str:
-    """Horizontal drift; adjacent tiles move in opposite directions."""
-    m = _parallax_multiplier(tile_index, parallax)
-    px = _tile_alternate_sign(tile_index) * 0.9 * m
-    py = 0.0
+    """Per-tile pure X or Y pan: row0 Y,X,Y…; each following row swaps that order."""
+    m = _parallax_magnitude(tile_index)
+    s = _tile_alternate_sign(tile_index) * 0.9 * m
+    if _parallax_uses_y(tile_index, cols):
+        px = 0.0
+        py = max(-1.0, min(1.0, s))
+        zoom = _parallax_zoom_for_axis(
+            cell_w, cell_h, horizontal=False, strength=_TILE_MOTION_STRENGTH
+        )
+    else:
+        px = max(-1.0, min(1.0, s))
+        py = 0.0
+        zoom = _parallax_zoom_for_axis(
+            cell_w, cell_h, horizontal=True, strength=_TILE_MOTION_STRENGTH
+        )
     return _zoompan_linear_pan(
         cell_w,
         cell_h,
         duration=duration,
-        strength=strength,
+        strength=_TILE_MOTION_STRENGTH,
         px=px,
         py=py,
         fixed_zoom=True,
+        zoom=zoom,
     )
-
-
-def _zoompan_axis_y(
-    cell_w: int,
-    cell_h: int,
-    tile_index: int,
-    cols: int,
-    *,
-    duration: float,
-    strength: float,
-    parallax: str,
-) -> str:
-    """Vertical drift; adjacent tiles move in opposite directions."""
-    m = _parallax_multiplier(tile_index, parallax)
-    px = 0.0
-    py = _tile_alternate_sign(tile_index) * 0.9 * m
-    return _zoompan_linear_pan(
-        cell_w,
-        cell_h,
-        duration=duration,
-        strength=strength,
-        px=px,
-        py=py,
-        fixed_zoom=True,
-    )
-
-
-def _zoompan_axis_alt(
-    cell_w: int,
-    cell_h: int,
-    tile_index: int,
-    cols: int,
-    *,
-    duration: float,
-    strength: float,
-    parallax: str,
-) -> str:
-    """Diagonal drift; adjacent tiles move in opposite directions on both axes."""
-    m = _parallax_multiplier(tile_index, parallax)
-    s = _tile_alternate_sign(tile_index)
-    px = s * 0.9 * m
-    py = s * 0.9 * m
-    return _zoompan_linear_pan(
-        cell_w,
-        cell_h,
-        duration=duration,
-        strength=strength,
-        px=px,
-        py=py,
-        fixed_zoom=True,
-    )
-
